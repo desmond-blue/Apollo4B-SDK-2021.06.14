@@ -76,6 +76,45 @@
 
 #define ENABLE_DEBUGGER
 
+void GPIO63_CLKOUT(void)
+{
+	//
+    // Enable the XT 
+    //
+    am_hal_clkgen_control(AM_HAL_CLKGEN_CONTROL_XTAL_START, 0);
+
+
+	//
+    // Configure the necessary pins.
+    //
+    am_hal_gpio_pincfg_t sPinCfg =
+    {
+      .GP.cfg_b.eGPOutCfg = 1,
+      .GP.cfg_b.ePullup   = 0
+    };
+
+    sPinCfg.GP.cfg_b.uFuncSel = AM_HAL_PIN_63_CLKOUT;
+    am_hal_gpio_pinconfig(63, sPinCfg);
+
+	//
+	// Disable before changing the clock
+	//
+	CLKGEN->CLKOUT_b.CKEN = 0;
+
+	//
+	// Set the new clock select
+	//
+	CLKGEN->CLKOUT_b.CKSEL = CLKGEN_CLKOUT_CKSEL_XT;
+	
+
+	//
+	// Enable as requested.
+	//
+	CLKGEN->CLKOUT_b.CKEN = 1;
+
+}
+
+
 //*****************************************************************************
 //
 // Main
@@ -115,6 +154,8 @@ main(void)
     //
     am_util_stdio_terminal_clear();
     am_util_stdio_printf("Hello World!\n\n");
+
+	GPIO63_CLKOUT();
 
     //
     // Print the device info.
