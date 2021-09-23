@@ -1804,7 +1804,7 @@ static int prepare_test_pattern(uint32_t pattern_index, uint8_t* buff, uint32_t 
     return 0;
 }
 bool
-psram_check(uint32_t length, uint32_t address)
+psram_check(void *pHandle, uint32_t length, uint32_t address)
 {
     // Try to use as less ram as possible in stack
     uint32_t ui32NumberOfBytesLeft = length;
@@ -1844,17 +1844,35 @@ psram_check(uint32_t length, uint32_t address)
         //
         // Read back data
         //
+#if 0
         am_hal_daxi_control(AM_HAL_DAXI_CONTROL_FLUSH, NULL);
         am_hal_daxi_control(AM_HAL_DAXI_CONTROL_INVALIDATE, NULL);
+
         xipPointer = (uint8_t *)(address + ui32AddressOffset);
         memcpy((uint8_t*)ui8RxBuffer, xipPointer, ui32TestBytes);
 
-        //
+#else
+		//int j = 0;
+		for(int i = 0; i < ui32TestBytes; i+=64)
+		{
+			
+			am_hal_daxi_control(AM_HAL_DAXI_CONTROL_FLUSH, NULL);
+            am_hal_daxi_control(AM_HAL_DAXI_CONTROL_INVALIDATE, NULL);
+			uint32_t ui32Status = pio_fast_read(pHandle, true, ((address-0x14000000) + ui32AddressOffset), (uint32_t *)(ui8RxBuffer+i), 64);
+			if (AM_DEVICES_MSPI_PSRAM_STATUS_SUCCESS != ui32Status)
+			{
+				am_util_stdio_printf("Failed to read buffer to Flash Device!\n");
+				break;
+			}
+			//j+=64;
+		}
+#endif
+		//
         // Verify the result
         //
         if ( memcmp(ui8RxBuffer, ui8TxBuffer, ui32TestBytes) )
         {
-            //am_util_debug_printf("    Failed to verify at offset 0x%08x!\n", ui32AddressOffset);
+            am_util_stdio_printf("    Failed to verify at offset 0x%08x!\n", ui32AddressOffset);
             // verify failed, return directly
             return true;
         }
@@ -1955,7 +1973,8 @@ find_mid_point(uint32_t* pVal)
 //! @return 32-bit status, scan result in structure type
 //
 //*****************************************************************************
-#define PSRAM_TIMING_SCAN_SIZE_BYTES (128*1024)
+//#define PSRAM_TIMING_SCAN_SIZE_BYTES (128*1024)
+#define PSRAM_TIMING_SCAN_SIZE_BYTES (0x200)
 const uint32_t ui32MspiXipBaseAddress[3] =
 {
     0x14000000, // mspi0
@@ -2057,15 +2076,18 @@ am_devices_mspi_psram_sdr_init_timing_check(uint32_t module,
     //
     // Start scan loop
     //
-    for ( uint8_t i = 0; i < 8; i++ )
+    for ( uint8_t i = 2; i < 8; i++ )
     {
         // set Turnaround and RXNEG
-        scanCfg.ui8PioTurnaround    = scanCfg.ui8XipTurnaround = sConfigArray[i].ui32Turnaround;
+        scanCfg.ui8PioTurnaround = ((sConfigArray[i].ui32Turnaround)-2);
+		scanCfg.ui8XipTurnaround = sConfigArray[i].ui32Turnaround;
         scanCfg.bRxNeg              = sConfigArray[i].ui32Rxneg;
+		am_util_stdio_printf("ui8PioTurnaround = %d, bRxNeg=%d\n",scanCfg.ui8PioTurnaround, scanCfg.bRxNeg);
         for ( uint8_t RxDqs_Index = 1; RxDqs_Index < 31; RxDqs_Index++ )
         {
             // set RXDQSDELAY0 value
             scanCfg.ui8RxDQSDelay   = RxDqs_Index;
+			am_util_stdio_printf("ui8RxDQSDelay = %d\n", scanCfg.ui8RxDQSDelay);
             // apply settings
             ui32Status = am_hal_mspi_control(pHandle, AM_HAL_MSPI_REQ_DQS, &scanCfg);
             if (AM_HAL_STATUS_SUCCESS != ui32Status)
@@ -2073,8 +2095,11 @@ am_devices_mspi_psram_sdr_init_timing_check(uint32_t module,
                 return AM_DEVICES_MSPI_PSRAM_STATUS_ERROR;
             }
 
+			
+
             // run data check
-            if ( false == psram_check(PSRAM_TIMING_SCAN_SIZE_BYTES, ui32MspiXipBaseAddress[module] + RxDqs_Index) )
+            // am_devices_mspi_psram_t
+            if ( false == psram_check(pDevHandle, PSRAM_TIMING_SCAN_SIZE_BYTES, ui32MspiXipBaseAddress[module] + RxDqs_Index) )
             {
                 // data check pass
                 ui32ResultArray[i] |= 0x01 << RxDqs_Index;
