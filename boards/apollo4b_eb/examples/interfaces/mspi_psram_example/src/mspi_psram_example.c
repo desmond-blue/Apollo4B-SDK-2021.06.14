@@ -417,18 +417,24 @@ main(void)
     am_util_stdio_terminal_clear();
     am_util_stdio_printf("Quad MSPI PSRAM Example\n\n");
 
-
+#if 1
     am_util_debug_printf("Starting MSPI SDR Timing Scan: \n");
     if ( AM_DEVICES_MSPI_PSRAM_STATUS_SUCCESS == am_devices_mspi_psram_sdr_init_timing_check(MSPI_TEST_MODULE, &MSPI_PSRAM_QuadCE1MSPIConfig, &MSPISdrTimingConfig) )
     {
-        am_util_debug_printf("==== Scan Result: TURNAROUND0 = %d \n", MSPISdrTimingConfig.ui32Turnaround);
-        am_util_debug_printf("                  RXNEG0      = %d \n", MSPISdrTimingConfig.ui32Rxneg);
-        am_util_debug_printf("                  RXDQSDELAY0 = %d \n", MSPISdrTimingConfig.ui32Rxdqsdelay);
+        am_util_stdio_printf("==== Scan Result: TURNAROUND0 = %d \n", MSPISdrTimingConfig.ui32Turnaround);
+        am_util_stdio_printf("                  RXNEG0      = %d \n", MSPISdrTimingConfig.ui32Rxneg);
+        am_util_stdio_printf("                  RXDQSDELAY0 = %d \n", MSPISdrTimingConfig.ui32Rxdqsdelay);
     }
     else
     {
-        am_util_debug_printf("==== Scan Result: Failed, no valid setting.  \n");
+        am_util_stdio_printf("==== Scan Result: Failed, no valid setting.  \n");
     }
+
+#else
+	MSPISdrTimingConfig.ui32Turnaround = 7;
+    MSPISdrTimingConfig.ui32Rxneg = 1;
+    MSPISdrTimingConfig.ui32Rxdqsdelay = 7;
+#endif
 
 
     //
@@ -467,7 +473,8 @@ main(void)
         am_util_stdio_printf("Failed to disable XIP mode in the MSPI!\n");
     }
 
-    //
+#if 1   
+	//
     // Write the TX buffer into the target sector.
     //
     am_util_stdio_printf("Writing %d Bytes to Address 0x%x\n", MSPI_BUFFER_SIZE, 0x0);
@@ -476,7 +483,9 @@ main(void)
     {
         am_util_stdio_printf("Failed to write buffer to Flash Device!\n");
     }
+#endif
 
+#if 0 
     //
     // Read the data back into the RX buffer.
     //
@@ -486,7 +495,21 @@ main(void)
     {
         am_util_stdio_printf("Failed to read buffer to Flash Device!\n");
     }
-
+#else
+	{
+		uint32_t ui32Status;
+		g_RXBuffer[0] = 0xFF;
+		for(int i = 0; i < MSPI_BUFFER_SIZE; i+=64)
+		{
+			ui32Status = pio_fast_read(g_pDevHandle, true, i, g_RXBuffer+i, 64);
+			if (AM_DEVICES_MSPI_PSRAM_STATUS_SUCCESS != ui32Status)
+			{
+				am_util_stdio_printf("Failed to read buffer to Flash Device!\n");
+				break;
+			}
+		}
+	}
+#endif
     //
     // Compare the buffers
     //

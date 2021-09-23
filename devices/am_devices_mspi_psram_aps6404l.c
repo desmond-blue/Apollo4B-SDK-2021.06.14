@@ -98,7 +98,7 @@ am_hal_mspi_dqs_t gSDREnableFineDelayCfg =
     .ui8TxDQSDelay          = 0,
     .bDQSSyncNeg            = 0,
     .ui8DQSDelay            = 0,
-    .ui8PioTurnaround       = 7,
+    .ui8PioTurnaround       = 4,
     .ui8XipTurnaround       = 7,
     .bRxNeg                 = 0,
 };
@@ -410,6 +410,37 @@ am_device_command_write(void *pMspiHandle,
                                        &Transaction,
                                        AM_DEVICES_MSPI_PSRAM_TIMEOUT);
 }
+
+uint32_t pio_fast_read(void *pHandle,
+                       bool bSendAddr,
+                       uint32_t ui32Addr,
+                       uint32_t *pData,
+                       uint32_t ui32NumBytes)
+{
+  am_devices_mspi_psram_t *pPsram = (am_devices_mspi_psram_t *)pHandle;
+  am_hal_mspi_pio_transfer_t  Transaction;
+
+  // Create the individual write transaction.
+  Transaction.ui32NumBytes            = ui32NumBytes;
+  Transaction.bScrambling             = false;
+  Transaction.eDirection              = AM_HAL_MSPI_RX;
+  Transaction.bSendAddr               = bSendAddr;
+  Transaction.ui32DeviceAddr          = ui32Addr;
+  Transaction.bSendInstr              = true;
+  Transaction.ui16DeviceInstr         = AM_DEVICES_MSPI_PSRAM_FAST_READ;
+  Transaction.bTurnaround             = true;
+  Transaction.bDCX                    = false;
+  Transaction.bEnWRLatency            = false;
+  Transaction.bContinue               = false;
+  //Transaction.eDeviceNum              = AM_HAL_MSPI_DEVICE0;
+  Transaction.pui32Buffer             = pData;
+
+  // Execute the transction over MSPI.
+  return am_hal_mspi_blocking_transfer(pPsram->pMspiHandle,
+                                       &Transaction,
+                                       AM_DEVICES_MSPI_PSRAM_TIMEOUT);
+}
+
 
 //*****************************************************************************
 //
@@ -2147,7 +2178,7 @@ am_devices_mspi_psram_apply_sdr_timing(void *pHandle,
 
     // apply timing settings: Turnaround, RXNEG and RXDQSDELAY
     applyCfg.ui8RxDQSDelay      = pDevSdrCfg->ui32Rxdqsdelay;
-    applyCfg.ui8PioTurnaround   = pDevSdrCfg->ui32Turnaround;
+    applyCfg.ui8PioTurnaround   = (pDevSdrCfg->ui32Turnaround - 2);
     applyCfg.ui8XipTurnaround   = pDevSdrCfg->ui32Turnaround;
     applyCfg.bRxNeg             = pDevSdrCfg->ui32Rxneg;
 
