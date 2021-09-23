@@ -98,7 +98,7 @@ am_hal_mspi_dqs_t gSDREnableFineDelayCfg =
     .ui8TxDQSDelay          = 0,
     .bDQSSyncNeg            = 0,
     .ui8DQSDelay            = 0,
-    .ui8PioTurnaround       = 4,
+    .ui8PioTurnaround       = 7,
     .ui8XipTurnaround       = 7,
     .bRxNeg                 = 0,
 };
@@ -427,7 +427,7 @@ uint32_t pio_fast_read(void *pHandle,
   Transaction.bSendAddr               = bSendAddr;
   Transaction.ui32DeviceAddr          = ui32Addr;
   Transaction.bSendInstr              = true;
-  Transaction.ui16DeviceInstr         = AM_DEVICES_MSPI_PSRAM_FAST_READ;
+  Transaction.ui16DeviceInstr         = AM_DEVICES_MSPI_PSRAM_QUAD_READ;
   Transaction.bTurnaround             = true;
   Transaction.bDCX                    = false;
   Transaction.bEnWRLatency            = false;
@@ -2076,10 +2076,10 @@ am_devices_mspi_psram_sdr_init_timing_check(uint32_t module,
     //
     // Start scan loop
     //
-    for ( uint8_t i = 2; i < 8; i++ )
+    for ( uint8_t i = 0; i < 8; i++ )
     {
         // set Turnaround and RXNEG
-        scanCfg.ui8PioTurnaround = ((sConfigArray[i].ui32Turnaround)-2);
+        scanCfg.ui8PioTurnaround = ((sConfigArray[i].ui32Turnaround));
 		scanCfg.ui8XipTurnaround = sConfigArray[i].ui32Turnaround;
         scanCfg.bRxNeg              = sConfigArray[i].ui32Rxneg;
 		am_util_stdio_printf("ui8PioTurnaround = %d, bRxNeg=%d\n",scanCfg.ui8PioTurnaround, scanCfg.bRxNeg);
@@ -2203,7 +2203,7 @@ am_devices_mspi_psram_apply_sdr_timing(void *pHandle,
 
     // apply timing settings: Turnaround, RXNEG and RXDQSDELAY
     applyCfg.ui8RxDQSDelay      = pDevSdrCfg->ui32Rxdqsdelay;
-    applyCfg.ui8PioTurnaround   = (pDevSdrCfg->ui32Turnaround - 2);
+    applyCfg.ui8PioTurnaround   = pDevSdrCfg->ui32Turnaround;
     applyCfg.ui8XipTurnaround   = pDevSdrCfg->ui32Turnaround;
     applyCfg.bRxNeg             = pDevSdrCfg->ui32Rxneg;
 
