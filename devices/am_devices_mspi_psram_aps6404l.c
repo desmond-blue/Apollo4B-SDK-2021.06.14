@@ -1813,6 +1813,7 @@ psram_check(void *pHandle, uint32_t length, uint32_t address)
     uint8_t ui8PatternCounter = 0;
     uint8_t ui8TxBuffer[PSRAM_CHECK_DATA_SIZE_BYTES];
     uint8_t ui8RxBuffer[PSRAM_CHECK_DATA_SIZE_BYTES];
+	uint32_t ui32Status;
 
     while ( ui32NumberOfBytesLeft )
     {
@@ -1845,6 +1846,7 @@ psram_check(void *pHandle, uint32_t length, uint32_t address)
         // Read back data
         //
 #if 0
+		/*Use XIPMM to read back data*/
         am_hal_daxi_control(AM_HAL_DAXI_CONTROL_FLUSH, NULL);
         am_hal_daxi_control(AM_HAL_DAXI_CONTROL_INVALIDATE, NULL);
 
@@ -1852,34 +1854,51 @@ psram_check(void *pHandle, uint32_t length, uint32_t address)
         memcpy((uint8_t*)ui8RxBuffer, xipPointer, ui32TestBytes);
 
 #else
-		//int j = 0;
+		//ui32Status = am_devices_mspi_psram_disable_xip(pHandle);
+		//if (AM_DEVICES_MSPI_PSRAM_STATUS_SUCCESS != ui32Status)
+		//{
+		//	am_util_stdio_printf("Failed to disable XIP mode in the MSPI!\n");
+		//}
+		
+		//am_util_delay_ms(1); //Good parts
+		am_util_delay_ms(10); //Bad parts
+
 		for(int i = 0; i < ui32TestBytes; i+=64)
 		{
 			
-			am_hal_daxi_control(AM_HAL_DAXI_CONTROL_FLUSH, NULL);
-            am_hal_daxi_control(AM_HAL_DAXI_CONTROL_INVALIDATE, NULL);
-			uint32_t ui32Status = pio_fast_read(pHandle, true, ((address-0x14000000) + ui32AddressOffset), (uint32_t *)(ui8RxBuffer+i), 64);
+			//am_hal_daxi_control(AM_HAL_DAXI_CONTROL_FLUSH, NULL);
+            //am_hal_daxi_control(AM_HAL_DAXI_CONTROL_INVALIDATE, NULL);
+			ui32Status = pio_fast_read(pHandle, true, ((address-0x14000000) + ui32AddressOffset +i), (uint32_t *)(ui8RxBuffer+i), 64);
 			if (AM_DEVICES_MSPI_PSRAM_STATUS_SUCCESS != ui32Status)
 			{
 				am_util_stdio_printf("Failed to read buffer to Flash Device!\n");
 				break;
 			}
-			//j+=64;
+			//am_util_delay_ms(10);
 		}
+		//
+		// Enable XIP mode.
+		//
+		//ui32Status = am_devices_mspi_psram_enable_xip(pHandle);
+		//if (AM_DEVICES_MSPI_PSRAM_STATUS_SUCCESS != ui32Status)
+		//{
+		//	am_util_stdio_printf("Failed to enable XIP mode in the MSPI!\n");
+		//}
 #endif
 		//
         // Verify the result
         //
         if ( memcmp(ui8RxBuffer, ui8TxBuffer, ui32TestBytes) )
         {
-            am_util_stdio_printf("    Failed to verify at offset 0x%08x!\n", ui32AddressOffset);
+			if(ui32AddressOffset>=0x100)
+			am_util_stdio_printf("    Failed at 0x%08x!\n\n", ui32AddressOffset);
             // verify failed, return directly
             return true;
         }
 
         ui32AddressOffset += ui32TestBytes;
     }
-
+	am_util_stdio_printf("    Passed\n\n");
     return false;
 }
 
@@ -1973,8 +1992,8 @@ find_mid_point(uint32_t* pVal)
 //! @return 32-bit status, scan result in structure type
 //
 //*****************************************************************************
-//#define PSRAM_TIMING_SCAN_SIZE_BYTES (128*1024)
-#define PSRAM_TIMING_SCAN_SIZE_BYTES (0x200)
+#define PSRAM_TIMING_SCAN_SIZE_BYTES (128*1024)
+//#define PSRAM_TIMING_SCAN_SIZE_BYTES (0x200)
 const uint32_t ui32MspiXipBaseAddress[3] =
 {
     0x14000000, // mspi0
@@ -2082,11 +2101,12 @@ am_devices_mspi_psram_sdr_init_timing_check(uint32_t module,
         scanCfg.ui8PioTurnaround = ((sConfigArray[i].ui32Turnaround));
 		scanCfg.ui8XipTurnaround = sConfigArray[i].ui32Turnaround;
         scanCfg.bRxNeg              = sConfigArray[i].ui32Rxneg;
-		am_util_stdio_printf("ui8PioTurnaround = %d, bRxNeg=%d\n",scanCfg.ui8PioTurnaround, scanCfg.bRxNeg);
+		
         for ( uint8_t RxDqs_Index = 1; RxDqs_Index < 31; RxDqs_Index++ )
         {
             // set RXDQSDELAY0 value
             scanCfg.ui8RxDQSDelay   = RxDqs_Index;
+			am_util_stdio_printf("ui8PioTurnaround = %d, bRxNeg=%d ",scanCfg.ui8PioTurnaround, scanCfg.bRxNeg);
 			am_util_stdio_printf("ui8RxDQSDelay = %d\n", scanCfg.ui8RxDQSDelay);
             // apply settings
             ui32Status = am_hal_mspi_control(pHandle, AM_HAL_MSPI_REQ_DQS, &scanCfg);
@@ -2099,7 +2119,8 @@ am_devices_mspi_psram_sdr_init_timing_check(uint32_t module,
 
             // run data check
             // am_devices_mspi_psram_t
-            if ( false == psram_check(pDevHandle, PSRAM_TIMING_SCAN_SIZE_BYTES, ui32MspiXipBaseAddress[module] + RxDqs_Index) )
+            //if ( false == psram_check(pDevHandle, PSRAM_TIMING_SCAN_SIZE_BYTES, ui32MspiXipBaseAddress[module] + RxDqs_Index) )
+						if ( false == psram_check(pDevHandle, PSRAM_TIMING_SCAN_SIZE_BYTES, ui32MspiXipBaseAddress[module]) +3) //TODO: Why PIO operations needs fixed address ?
             {
                 // data check pass
                 ui32ResultArray[i] |= 0x01 << RxDqs_Index;
