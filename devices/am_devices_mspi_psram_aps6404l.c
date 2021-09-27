@@ -1860,15 +1860,15 @@ psram_check(void *pHandle, uint32_t length, uint32_t address)
 		//	am_util_stdio_printf("Failed to disable XIP mode in the MSPI!\n");
 		//}
 		
-		//am_util_delay_ms(1); //Good parts
-		am_util_delay_ms(10); //Bad parts
+		am_util_delay_ms(1); //Good parts
+		//am_util_delay_ms(10); //Bad parts
 
-		for(int i = 0; i < ui32TestBytes; i+=64)
+		for(int i = 0; i < ui32TestBytes; i+=16)
 		{
 			
 			//am_hal_daxi_control(AM_HAL_DAXI_CONTROL_FLUSH, NULL);
             //am_hal_daxi_control(AM_HAL_DAXI_CONTROL_INVALIDATE, NULL);
-			ui32Status = pio_fast_read(pHandle, true, ((address-0x14000000) + ui32AddressOffset +i), (uint32_t *)(ui8RxBuffer+i), 64);
+			ui32Status = pio_fast_read(pHandle, true, ((address-0x14000000) + ui32AddressOffset +i), (uint32_t *)(ui8RxBuffer+i), 16);
 			if (AM_DEVICES_MSPI_PSRAM_STATUS_SUCCESS != ui32Status)
 			{
 				am_util_stdio_printf("Failed to read buffer to Flash Device!\n");
@@ -2120,7 +2120,7 @@ am_devices_mspi_psram_sdr_init_timing_check(uint32_t module,
             // run data check
             // am_devices_mspi_psram_t
             //if ( false == psram_check(pDevHandle, PSRAM_TIMING_SCAN_SIZE_BYTES, ui32MspiXipBaseAddress[module] + RxDqs_Index) )
-						if ( false == psram_check(pDevHandle, PSRAM_TIMING_SCAN_SIZE_BYTES, ui32MspiXipBaseAddress[module]) +3) //TODO: Why PIO operations needs fixed address ?
+			if ( false == psram_check(pDevHandle, PSRAM_TIMING_SCAN_SIZE_BYTES, ui32MspiXipBaseAddress[module]) ) //TODO: Why PIO operations needs fixed address ?
             {
                 // data check pass
                 ui32ResultArray[i] |= 0x01 << RxDqs_Index;

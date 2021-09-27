@@ -489,28 +489,15 @@ main(void)
     //
     // Read the data back into the RX buffer.
     //
+    am_util_stdio_printf("Read(XIPMM) the data back into the RX buffer.\n");
     am_util_stdio_printf("Read %d Bytes from Sector %d\n", MSPI_BUFFER_SIZE, 0x0);
     ui32Status = am_devices_mspi_psram_read(g_pDevHandle, g_RXBuffer, 0x0, MSPI_BUFFER_SIZE, true);
     if (AM_DEVICES_MSPI_PSRAM_STATUS_SUCCESS != ui32Status)
     {
-        am_util_stdio_printf("Failed to read buffer to Flash Device!\n");
+        am_util_stdio_printf("Failed to read buffer from Flash Device!\n");
     }
-#else
-	{
-		uint32_t ui32Status;
-		g_RXBuffer[0] = 0xFF;
-		for(int i = 0; i < MSPI_BUFFER_SIZE; i+=64)
-		{
-			ui32Status = pio_fast_read(g_pDevHandle, true, i, g_RXBuffer+i, 64);
-			if (AM_DEVICES_MSPI_PSRAM_STATUS_SUCCESS != ui32Status)
-			{
-				am_util_stdio_printf("Failed to read buffer to Flash Device!\n");
-				break;
-			}
-		}
-	}
-#endif
-    //
+
+	//
     // Compare the buffers
     //
     am_util_stdio_printf("Comparing the TX and RX Buffers\n");
@@ -522,6 +509,40 @@ main(void)
             break;
         }
     }
+	
+#else
+	{
+		uint32_t ui32Status;
+		am_util_stdio_printf("Read(PIO) the data back into the RX buffer.\n");
+
+		for(int j = 0; j < 1000; j++)
+		{
+			for(int i = 0; i < MSPI_BUFFER_SIZE; i+=64)
+			{
+				ui32Status = pio_fast_read(g_pDevHandle, true, i, g_RXBuffer+i, 64);
+				if (AM_DEVICES_MSPI_PSRAM_STATUS_SUCCESS != ui32Status)
+				{
+					am_util_stdio_printf("Failed to read buffer from Flash Device!(%d, %d)\n",j,i);
+					break;
+				}
+			}
+
+			//
+			// Compare the buffers
+			//
+			//am_util_stdio_printf("Comparing the TX and RX Buffers\n");
+			for (uint32_t i = 0; i < MSPI_BUFFER_SIZE; i++)
+			{
+				if (g_RXBuffer[i] != g_TXBuffer[i])
+				{
+					am_util_stdio_printf("TX and RX buffers failed to compare!(%d, %d)\n",j,i);
+					break;
+				}
+			}
+		}
+	}
+#endif
+
 
     //
     // Enable XIP mode.
