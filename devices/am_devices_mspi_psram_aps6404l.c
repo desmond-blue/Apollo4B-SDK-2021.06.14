@@ -1814,6 +1814,9 @@ psram_check(void *pHandle, uint32_t length, uint32_t address)
     uint8_t ui8TxBuffer[PSRAM_CHECK_DATA_SIZE_BYTES];
     uint8_t ui8RxBuffer[PSRAM_CHECK_DATA_SIZE_BYTES];
 	uint32_t ui32Status;
+	
+	am_hal_gpio_state_write(0, AM_HAL_GPIO_OUTPUT_SET);
+	am_hal_gpio_pinconfig(0, am_hal_gpio_pincfg_output);
 
     while ( ui32NumberOfBytesLeft )
     {
@@ -1859,9 +1862,12 @@ psram_check(void *pHandle, uint32_t length, uint32_t address)
 		//{
 		//	am_util_stdio_printf("Failed to disable XIP mode in the MSPI!\n");
 		//}
-		
+		am_hal_gpio_state_write(0, AM_HAL_GPIO_OUTPUT_CLEAR);
 		am_util_delay_ms(1); //Good parts
-		//am_util_delay_ms(10); //Bad parts
+		//am_util_delay_ms(20); //Bad parts
+
+		am_hal_gpio_state_write(0, AM_HAL_GPIO_OUTPUT_SET);
+    
 
 		for(int i = 0; i < ui32TestBytes; i+=16)
 		{
@@ -2092,6 +2098,9 @@ am_devices_mspi_psram_sdr_init_timing_check(uint32_t module,
         return ui32Status;
     }
 
+	am_hal_gpio_state_write(1, AM_HAL_GPIO_OUTPUT_SET);
+	am_hal_gpio_pinconfig(1, am_hal_gpio_pincfg_output);
+
     //
     // Start scan loop
     //
@@ -2115,8 +2124,15 @@ am_devices_mspi_psram_sdr_init_timing_check(uint32_t module,
                 return AM_DEVICES_MSPI_PSRAM_STATUS_ERROR;
             }
 
-			
 
+			if(scanCfg.ui8PioTurnaround == 7 && scanCfg.bRxNeg == 1 && scanCfg.ui8RxDQSDelay == 9)
+			{
+			 	//TURNAROUND0 = 7 
+                //RXNEG0      = 1 
+                //RXDQSDELAY0 = 9
+                am_hal_gpio_state_write(1, AM_HAL_GPIO_OUTPUT_CLEAR);
+			}
+			
             // run data check
             // am_devices_mspi_psram_t
             //if ( false == psram_check(pDevHandle, PSRAM_TIMING_SCAN_SIZE_BYTES, ui32MspiXipBaseAddress[module] + RxDqs_Index) )
@@ -2129,6 +2145,7 @@ am_devices_mspi_psram_sdr_init_timing_check(uint32_t module,
             {
                 // data check failed
             }
+			am_hal_gpio_state_write(1, AM_HAL_GPIO_OUTPUT_SET);
         }
     }
 
