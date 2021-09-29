@@ -59,7 +59,7 @@
 // Macro definitions
 //
 //*****************************************************************************
-#define WAKE_INTERVAL_IN_MS     1000
+#define WAKE_INTERVAL_IN_MS     40000
 #define XT_PERIOD               32768
 #define WAKE_INTERVAL           XT_PERIOD * WAKE_INTERVAL_IN_MS * 1e-3
 
@@ -113,29 +113,8 @@ am_stimer_cmpr0_isr(void)
     am_hal_stimer_int_clear(AM_HAL_STIMER_INT_COMPAREA);
     am_hal_stimer_compare_delta_set(0, WAKE_INTERVAL);
 
-#if AM_BSP_NUM_LEDS > 0
-    //
-    // Toggle the LED.
-    //
-#if AM_BSP_NUM_LEDS > 1
-    am_devices_led_array_out(am_bsp_psLEDs, AM_BSP_NUM_LEDS, 1 << (g_ui32Count % AM_BSP_NUM_LEDS));
-#elif AM_BSP_NUM_LEDS > 0
-    am_devices_led_array_out(am_bsp_psLEDs, 1, g_ui32Count & 1);
-#endif
-    g_ui32Count++;
-#else
-    am_util_stdio_printf("%d ", g_ui32Count & 7);
+	am_hal_gpio_output_toggle(88);
 
-    g_ui32Count++;
-
-    //
-    // Do a linefeed after 32 prints.
-    //
-    if ( (g_ui32Count & 0x1F) == 0 )
-    {
-        am_util_stdio_printf("\n");
-    }
-#endif
 }
 
 //*****************************************************************************
@@ -157,30 +136,6 @@ main(void)
     //
     am_bsp_low_power_init();
 
-#if (AM_BSP_NUM_LEDS > 0)
-    //
-    // Configure the pins for this board.
-    //
-    am_devices_led_array_init(am_bsp_psLEDs, AM_BSP_NUM_LEDS);
-#endif
-
-    //
-    // Initialize the printf interface for ITM/SWO output.
-    //
-    am_bsp_itm_printf_enable();
-
-    //
-    // Clear the terminal and print the banner.
-    //
-    am_util_stdio_terminal_clear();
-    am_util_stdio_printf("STimer Example\n");
-#if AM_BSP_NUM_LEDS > 0
-    am_util_stdio_printf("The STimer will wake about every 1s to walk the LEDs on the EVB.\n");
-#else
-    am_util_stdio_printf("The STimer will wake about every 1s to print to SWO.\n");
-#endif
-    am_util_delay_ms(10);
-
     //
     // STIMER init.
     //
@@ -191,12 +146,8 @@ main(void)
     //
     am_hal_interrupt_master_enable();
 
-#ifdef AM_BSP_NUM_LEDS
-    //
-    // We are done printing. Disable debug printf messages on ITM.
-    //
-    //am_bsp_debug_printf_disable();
-#endif
+	am_hal_gpio_state_write(88, AM_HAL_GPIO_OUTPUT_SET);
+	am_hal_gpio_pinconfig(88, am_hal_gpio_pincfg_output);
 
     //
     // Sleep forever while waiting for an interrupt.
