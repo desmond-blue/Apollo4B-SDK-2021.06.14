@@ -237,29 +237,14 @@ stimer_init(void)
 }
 
 
-//*****************************************************************************
-//
-// Timer Interrupt Service Routine (ISR)
-//
-//*****************************************************************************
-void
-am_stimer_cmpr0_isr(void)
-{
-    //
-    // Check the timer interrupt status.
-    //
-    am_hal_stimer_int_clear(AM_HAL_STIMER_INT_COMPAREA);
-    am_hal_stimer_compare_delta_set(0, WAKE_INTERVAL);
+unsigned long long int factorial(unsigned int i) {
 
-    uint8_t testByte;
-    testByte  = testBuffer2[g_timer_isr_count % 6];
-    memset((void *)DSPRAM_TEST_ADDR, testByte, 0x400);
-    g_timer_isr_count++;
-    am_util_debug_printf("\nWrite DSPRAM in Stimer ISR\n");
-    am_util_debug_printf("g_timer_isr_count=%d \n\n", g_timer_isr_count);
+   if(i <= 1) 
+   {
+      return 1;
+   }
+   return i * factorial(i - 1);
 }
-
-am_devices_mspi_psram_ddr_timing_config_t MSPIDdrTimingConfig;
 
 //*****************************************************************************
 //
@@ -304,44 +289,6 @@ main(void)
     am_util_stdio_printf("Apollo4 MPU Example\n\n");
 
 
-    am_util_debug_printf("Starting MSPI DDR Timing Scan: \n");
-    if ( AM_DEVICES_MSPI_PSRAM_STATUS_SUCCESS == am_devices_mspi_psram_ddr_init_timing_check(MSPI_TEST_MODULE, &MSPI_PSRAM_OctalCE0MSPIConfig, &MSPIDdrTimingConfig) )
-    {
-        am_util_debug_printf("==== Scan Result: RXDQSDELAY0 = %d \n", MSPIDdrTimingConfig.ui32Rxdqsdelay);
-    }
-    else
-    {
-        am_util_debug_printf("==== Scan Result: Failed, no valid setting.  \n");
-    }
-
-    //
-    // Configure the MSPI and PSRAM Device.
-    //
-    uint32_t ui32Status = am_devices_mspi_psram_aps12808l_ddr_init(MSPI_TEST_MODULE, &MSPI_PSRAM_OctalCE0MSPIConfig, &g_pDevHandle, &g_pHandle);
-    if (AM_DEVICES_MSPI_PSRAM_STATUS_SUCCESS != ui32Status)
-    {
-        am_util_stdio_printf("Failed to configure the MSPI and PSRAM Device correctly!\n");
-    }
-    NVIC_SetPriority(mspi_interrupts[MSPI_TEST_MODULE], 5);
-    NVIC_EnableIRQ(mspi_interrupts[MSPI_TEST_MODULE]);
-
-    am_hal_interrupt_master_enable();
-
-    //
-    //  Set the DDR timing from previous scan.
-    //
-    // TODO: This needs to check for error in Scan and return and check an error here!!!
-    am_devices_mspi_psram_apply_ddr_timing(g_pDevHandle, &MSPIDdrTimingConfig);
-
-    //
-    // Enable XIP mode.
-    //
-    ui32Status = am_devices_mspi_psram_aps12808l_ddr_enable_xip(g_pDevHandle);
-    if (AM_DEVICES_MSPI_PSRAM_STATUS_SUCCESS != ui32Status)
-    {
-        am_util_stdio_printf("Failed to enable XIP mode in the MSPI!\n");
-    }
-
     //
     // Read MPU TYPE register and check for MPU presence.
     //
@@ -361,7 +308,7 @@ main(void)
     //
     mpu_region_configure(&sSSRAM_A, false);
     mpu_region_configure(&sSSRAM_B, false);
-    mpu_region_configure(&sPSRAM, false);
+    //mpu_region_configure(&sPSRAM, false);
     mpu_region_configure(&sDSPRAM_A, true);
     mpu_region_configure(&sDSPRAM_B, true);
 
@@ -370,6 +317,9 @@ main(void)
     //
     mpu_global_configure(true, true, false);
 
+
+    //factorial(20);
+#if 0
     //
     // Set high priority for MPU ISR
     //
@@ -383,6 +333,7 @@ main(void)
     g_pTestCount2 = (uint32_t *)0x101C1B00; //ADDR = 0x101C1B00 located in DSP_RAM1
     *g_pTestCount1 = 0;
     *g_pTestCount2 = 0;
+
 
     //
     // STIMER init.
@@ -404,6 +355,9 @@ main(void)
     }
 
     am_hal_interrupt_master_disable();
+#endif
+
+    
     //
     //  End banner.
     //
@@ -417,7 +371,7 @@ main(void)
         //
         // Go to Deep Sleep.
         //
-        am_hal_sysctrl_sleep(AM_HAL_SYSCTRL_SLEEP_DEEP);
+        //am_hal_sysctrl_sleep(AM_HAL_SYSCTRL_SLEEP_DEEP);
     }
 }
 
