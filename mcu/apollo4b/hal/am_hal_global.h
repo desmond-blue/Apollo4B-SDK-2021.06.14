@@ -13,39 +13,9 @@
 
 //*****************************************************************************
 //
-// Copyright (c) 2021, Ambiq Micro, Inc.
-// All rights reserved.
+// ${copyright}
 //
-// Redistribution and use in source and binary forms, with or without
-// modification, are permitted provided that the following conditions are met:
-//
-// 1. Redistributions of source code must retain the above copyright notice,
-// this list of conditions and the following disclaimer.
-//
-// 2. Redistributions in binary form must reproduce the above copyright
-// notice, this list of conditions and the following disclaimer in the
-// documentation and/or other materials provided with the distribution.
-//
-// 3. Neither the name of the copyright holder nor the names of its
-// contributors may be used to endorse or promote products derived from this
-// software without specific prior written permission.
-//
-// Third party software included in this distribution is subject to the
-// additional license terms as defined in the /docs/licenses directory.
-//
-// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
-// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
-// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
-// ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
-// LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
-// CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
-// SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
-// INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
-// CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
-// ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
-// POSSIBILITY OF SUCH DAMAGE.
-//
-// This is part of revision b0-release-20210111-1514-g6a1d4008b7 of the AmbiqSuite Development Package.
+// This is part of revision ${version} of the AmbiqSuite Development Package.
 //
 //*****************************************************************************
 #ifndef AM_HAL_GLOBAL_H
@@ -80,6 +50,32 @@ extern "C"
 #define _AM_ASSERT_CONCAT_(a, b) a##b
 #define _AM_ASSERT_CONCAT(a, b) _AM_ASSERT_CONCAT_(a, b)
 #define am_ct_assert(e) enum { _AM_ASSERT_CONCAT(assert_line_, __LINE__) = 1/(!!(e)) }
+
+//*****************************************************************************
+//
+// STATIC_ASSERT will do a static (compile-time) check of a sizeof() operation
+// (such as the size of a structure) without creating any code.
+// This can be useful in a situation such as initializing a structure in a
+// member-by-member fashion to make sure the entire structure is initialized,
+// particularly if that structure might be changed in the future.
+//
+// Example usage (assumes some_structure_s contains 20 uint32_t's):
+//  STATIC_ASSERT(sizeof(struct some_structure_s) != (20 * 4));
+//
+// If the condition is not met, a compile error will be induced that will
+// will typically display a message along the lines of
+// "The size of an array must be greater than zero."
+//
+// The STATIC_ASSERT macro is specific to sizeof() and is not recommended
+// for use in other assert situations.
+//
+//*****************************************************************************
+#define STATIC_ASSERT(condition) ((void)sizeof(char[1 - 2*!!(condition)]))
+// #### INTERNAL BEGIN ####
+// Another solution.
+//#define STATIC_ASSERT(condition) typedef char pstatic_assert##__LINE__[ (condition) ? 1 : -1];
+//STATIC_ASSERT(sizeof(struct trim_regs_s) == (21 * 4))
+// #### INTERNAL END ####
 
 //*****************************************************************************
 //

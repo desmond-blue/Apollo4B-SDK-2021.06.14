@@ -13,39 +13,9 @@
 
 //*****************************************************************************
 //
-// Copyright (c) 2021, Ambiq Micro, Inc.
-// All rights reserved.
+// ${copyright}
 //
-// Redistribution and use in source and binary forms, with or without
-// modification, are permitted provided that the following conditions are met:
-//
-// 1. Redistributions of source code must retain the above copyright notice,
-// this list of conditions and the following disclaimer.
-//
-// 2. Redistributions in binary form must reproduce the above copyright
-// notice, this list of conditions and the following disclaimer in the
-// documentation and/or other materials provided with the distribution.
-//
-// 3. Neither the name of the copyright holder nor the names of its
-// contributors may be used to endorse or promote products derived from this
-// software without specific prior written permission.
-//
-// Third party software included in this distribution is subject to the
-// additional license terms as defined in the /docs/licenses directory.
-//
-// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
-// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
-// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
-// ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
-// LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
-// CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
-// SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
-// INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
-// CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
-// ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
-// POSSIBILITY OF SUCH DAMAGE.
-//
-// This is part of revision b0-release-20210111-1514-g6a1d4008b7 of the AmbiqSuite Development Package.
+// This is part of revision ${version} of the AmbiqSuite Development Package.
 //
 //*****************************************************************************
 #include <stdint.h>
@@ -74,12 +44,39 @@
 #define MAX_LDOVDDCTRIM     _FLD2VAL(MCUCTRL_LDOREG1_CORELDOACTIVETRIM, MCUCTRL_LDOREG1_CORELDOACTIVETRIM_Msk)
 
 //
-// Define the number of steps to bump the simobuck VDDF trims for
-// PCM and pre-PCM parts.
+// Define the number of steps needed to boost the simobuck VDDF trims
+// for PCM or pre-PCM parts.
+// (Note that "PCM" is simply a trim level version of product test.)
 //
-#define TRIMREV_PCM                     6   // Trim revsion number for PCM
-#define BUCK_VDDF_BOOST_STEPS_PCM       7   // PCM parts
-#define BUCK_VDDF_BOOST_STEPS_PREPCM    3   // Pre-PCM parts
+#define TRIMREV_PCM                             6   // Trim revision number for PCM
+#define BUCK_VDDF_BOOST_STEPS_PCM               7   // PCM parts
+#define BUCK_VDDF_BOOST_STEPS_PREPCM            3   // Pre-PCM parts
+#if AM_HAL_PWRCTL_SET_CORELDO_MEMLDO_IN_PARALLEL
+#define BUCK_VDDF_BOOST_STEPS_PARALLEL_PCM      3
+#define BUCK_VDDF_BOOST_STEPS_PARALLEL_PREPCM   0
+#endif // AM_HAL_PWRCTL_SET_CORELDO_MEMLDO_IN_PARALLEL
+
+// #### INTERNAL BEGIN ####
+// HSP20-501 solution macro defines for LDO operation in parallel
+// #### INTERNAL END ####
+//
+// Define min values of BUCK and LDO trim fields
+//
+#define MIN_LDOVDDFTRIM         1
+#define MIN_LDOVDDCTRIM         1
+#define MIN_BUCKVDDFTRIM        1
+#define MIN_BUCKVDDCTRIM        1
+
+#if AM_HAL_PWRCTL_SET_CORELDO_MEMLDO_IN_PARALLEL
+//
+// Define parameters for LDO operation in parallel
+//
+#define TRIM_STEP                           1
+#define BUCK_PULSE_COUNT_DELAY_US           50
+
+#define CORELDO_STEPDOWN_TRIMCODE           20  // Core LDO to be kept 40mV below buck VDDC
+#define MEMLDO_STEPDOWN_TRIMCODE            6   // Mem  LDO to be kept 35mV below buck VDDC
+#endif // AM_HAL_PWRCTL_SET_CORELDO_MEMLDO_IN_PARALLEL
 
 //
 // Internal non-published function, since Timer13 is reserved for a workaround.
@@ -103,18 +100,56 @@ uint32_t g_ui32TrimLVT              = 0xFFFFFFFF;
 uint32_t g_ui32origSimobuckVDDFtrim = 0xFFFFFFFF;
 uint32_t g_ui32origSimobuckVDDCtrim = 0xFFFFFFFF;
 uint32_t g_ui32origLDOVDDCtrim      = 0xFFFFFFFF;
+uint32_t g_ui32origMEMLDOActiveTrim = 0xFFFFFFFF;
+uint32_t g_ui32origSimobuckVDDStrim = 0xFFFFFFFF;
 bool     g_bVDDCbuckboosted         = false;
 bool     g_bVDDCLDOboosted          = false;
 
-//
+// *************************************************************
+// Define the structure for preserving various trim registers
+// including SIMOBUCK trim and other related registers.
+// **************************************************************
+struct trim_regs_s
+{
+    uint32_t    ui32Valid;
+
+    // MCUCTRL SIMOBUCK regs
+    uint32_t    ui32SB0;
+    uint32_t    ui32SB1;
+    uint32_t    ui32SB2;
+    uint32_t    ui32SB4;
+    uint32_t    ui32SB6;
+    uint32_t    ui32SB7;
+    uint32_t    ui32SB9;
+    uint32_t    ui32SB12;
+    uint32_t    ui32SB13;
+    uint32_t    ui32SB15;
+
+    // Other MCUCTRL regs
+    uint32_t    ui32LDOREG1;
+    uint32_t    ui32LDOREG2;
+    uint32_t    ui32VREFGEN2;
+    uint32_t    ui32PWRSW0;
+    uint32_t    ui32PWRSW1;
+    uint32_t    ui32VRCTRL;
+    uint32_t    ui32ACRG;
+    uint32_t    ui32XTALGENCTRL;
+    uint32_t    ui32ADCPWRCTRL;
+    uint32_t    ui32AUDADCPWRCTRL;
+};
+
+#define ORIGTRIMREGSVALID   0xCD735A03      // Arbitrary random signature
+struct trim_regs_s g_trim_reg_origvals = {0};
+
+// **********************************************
 // Define the peripheral control structure.
-//
+// **********************************************
 struct am_pwr_s
 {
-  uint32_t      ui32PwrEnRegAddr;
-  uint32_t      ui32PeriphEnable;
-  uint32_t      ui32PwrStatReqAddr;
-  uint32_t      ui32PeriphStatus;
+    uint32_t    ui32PwrEnRegAddr;
+    uint32_t    ui32PeriphEnable;
+    uint32_t    ui32PwrStatReqAddr;
+    uint32_t    ui32PeriphStatus;
 };
 
 //
@@ -344,14 +379,14 @@ const struct am_pwr_s am_hal_pwrctrl_peripheral_control[AM_HAL_PWRCTRL_PERIPH_MA
 static inline uint32_t
 am_get_pwrctrl(struct am_pwr_s *pwr_ctrl, uint32_t ePeripheral)
 {
-  if (pwr_ctrl == NULL || ePeripheral >= AM_HAL_PWRCTRL_PERIPH_MAX)
-  {
-    return AM_HAL_STATUS_INVALID_ARG;
-  }
+    if ( pwr_ctrl == NULL || ePeripheral >= AM_HAL_PWRCTRL_PERIPH_MAX )
+    {
+        return AM_HAL_STATUS_INVALID_ARG;
+    }
 
-  *pwr_ctrl = am_hal_pwrctrl_peripheral_control[ePeripheral];
+    *pwr_ctrl = am_hal_pwrctrl_peripheral_control[ePeripheral];
 
-  return AM_HAL_STATUS_SUCCESS;
+    return AM_HAL_STATUS_SUCCESS;
 }
 #else
 //*****************************************************************************
@@ -367,35 +402,35 @@ am_get_pwrctrl(struct am_pwr_s *pwr_ctrl, uint32_t ePeripheral)
 static uint32_t
 am_get_pwrctrl(struct am_pwr_s *pwr_ctrl, uint32_t ePeripheral)
 {
-  int shift_pos;
+    int shift_pos;
 
-  if (pwr_ctrl == NULL || ePeripheral >= AM_HAL_PWRCTRL_PERIPH_MAX)
-  {
-    return AM_HAL_STATUS_INVALID_ARG;
-  }
-
-  if (ePeripheral < AM_HAL_PWRCTRL_PERIPH_AUDREC)
-  {
-    pwr_ctrl->ui32PwrEnRegAddr = AM_REGADDR(PWRCTRL, DEVPWREN);
-    pwr_ctrl->ui32PwrStatReqAddr = AM_REGADDR(PWRCTRL, DEVPWRSTATUS);
-    pwr_ctrl->ui32PeriphEnable = 1 << ePeripheral;
-    pwr_ctrl->ui32PeriphStatus = 1 << ePeripheral;
-  }
-  else
-  {
-    shift_pos = (ePeripheral - AM_HAL_PWRCTRL_PERIPH_AUDREC);
-    if (ePeripheral > AM_HAL_PWRCTRL_PERIPH_I2S1)
+    if (pwr_ctrl == NULL || ePeripheral >= AM_HAL_PWRCTRL_PERIPH_MAX)
     {
-      shift_pos += 2;
+        return AM_HAL_STATUS_INVALID_ARG;
     }
 
-    pwr_ctrl->ui32PwrEnRegAddr =  AM_REGADDR(PWRCTRL, AUDSSPWREN);
-    pwr_ctrl->ui32PwrStatReqAddr = AM_REGADDR(PWRCTRL, AUDSSPWRSTATUS);
-    pwr_ctrl->ui32PeriphEnable = 1 << shift_pos;
-    pwr_ctrl->ui32PeriphStatus = 1 << shift_pos;
-  }
+    if (ePeripheral < AM_HAL_PWRCTRL_PERIPH_AUDREC)
+    {
+        pwr_ctrl->ui32PwrEnRegAddr = AM_REGADDR(PWRCTRL, DEVPWREN);
+        pwr_ctrl->ui32PwrStatReqAddr = AM_REGADDR(PWRCTRL, DEVPWRSTATUS);
+        pwr_ctrl->ui32PeriphEnable = 1 << ePeripheral;
+        pwr_ctrl->ui32PeriphStatus = 1 << ePeripheral;
+    }
+    else
+    {
+        shift_pos = (ePeripheral - AM_HAL_PWRCTRL_PERIPH_AUDREC);
+        if (ePeripheral > AM_HAL_PWRCTRL_PERIPH_I2S1)
+        {
+            shift_pos += 2;
+        }
 
-  return AM_HAL_STATUS_SUCCESS;
+        pwr_ctrl->ui32PwrEnRegAddr =  AM_REGADDR(PWRCTRL, AUDSSPWREN);
+        pwr_ctrl->ui32PwrStatReqAddr = AM_REGADDR(PWRCTRL, AUDSSPWRSTATUS);
+        pwr_ctrl->ui32PeriphEnable = 1 << shift_pos;
+        pwr_ctrl->ui32PeriphStatus = 1 << shift_pos;
+    }
+
+    return AM_HAL_STATUS_SUCCESS;
 }
 #endif // AM_HAL_PWRCTRL_RAM_TABLE
 
@@ -403,6 +438,9 @@ am_get_pwrctrl(struct am_pwr_s *pwr_ctrl, uint32_t ePeripheral)
 // Default configurations.
 //
 //*****************************************************************************
+// #### INTERNAL BEGIN ####
+// TODO - FIXME: What are the proper default memory configurations?
+// #### INTERNAL END ####
 const am_hal_pwrctrl_mcu_memory_config_t      g_DefaultMcuMemCfg =
 {
     .eCacheCfg          = AM_HAL_PWRCTRL_CACHE_ALL,
@@ -429,6 +467,57 @@ const am_hal_pwrctrl_dsp_memory_config_t      g_DefaultDSPMemCfg =
     .bActiveRAM         = false,
     .bRetainRAM         = true
 };
+
+
+// ****************************************************************************
+//
+//  preserve_orig_reg_value() - Saves the SIMOBUCK registers on the first call.
+//
+// ****************************************************************************
+static void
+preserve_orig_reg_values(void)
+{
+#if 1
+    //
+    // STATIC_ASSERT will do a static (compile-time) check of a sizeof()
+    // operation without creating any code. If the structure should change
+    // from the current 21 members, a compile error will occur.
+    //
+    STATIC_ASSERT(sizeof(struct trim_regs_s) != (21 * 4));
+#endif
+
+    if ( g_trim_reg_origvals.ui32Valid == ORIGTRIMREGSVALID )
+    {
+        return;
+    }
+
+    g_trim_reg_origvals.ui32SB0             = MCUCTRL->SIMOBUCK0;
+    g_trim_reg_origvals.ui32SB1             = MCUCTRL->SIMOBUCK1;
+    g_trim_reg_origvals.ui32SB2             = MCUCTRL->SIMOBUCK2;
+    g_trim_reg_origvals.ui32SB4             = MCUCTRL->SIMOBUCK4;
+    g_trim_reg_origvals.ui32SB6             = MCUCTRL->SIMOBUCK6;
+    g_trim_reg_origvals.ui32SB7             = MCUCTRL->SIMOBUCK7;
+    g_trim_reg_origvals.ui32SB9             = MCUCTRL->SIMOBUCK9;
+    g_trim_reg_origvals.ui32SB12            = MCUCTRL->SIMOBUCK12;
+    g_trim_reg_origvals.ui32SB13            = MCUCTRL->SIMOBUCK13;
+    g_trim_reg_origvals.ui32SB15            = MCUCTRL->SIMOBUCK15;
+
+    g_trim_reg_origvals.ui32LDOREG1         = MCUCTRL->LDOREG1;
+    g_trim_reg_origvals.ui32LDOREG2         = MCUCTRL->LDOREG2;
+    g_trim_reg_origvals.ui32VREFGEN2        = MCUCTRL->VREFGEN2;
+
+    g_trim_reg_origvals.ui32PWRSW0          = MCUCTRL->PWRSW0;
+    g_trim_reg_origvals.ui32PWRSW1          = MCUCTRL->PWRSW1;
+    g_trim_reg_origvals.ui32VRCTRL          = MCUCTRL->VRCTRL;
+    g_trim_reg_origvals.ui32ACRG            = MCUCTRL->ACRG;
+    g_trim_reg_origvals.ui32XTALGENCTRL     = MCUCTRL->XTALGENCTRL;
+    g_trim_reg_origvals.ui32ADCPWRCTRL      = MCUCTRL->ADCPWRCTRL;
+    g_trim_reg_origvals.ui32AUDADCPWRCTRL   = MCUCTRL->AUDADCPWRCTRL;
+
+    g_trim_reg_origvals.ui32Valid = ORIGTRIMREGSVALID;
+
+} // preserve_orig_reg_values()
+
 
 #ifdef AM_HAL_PWRCTL_CRYPTO_WA
 // ****************************************************************************
@@ -486,6 +575,12 @@ uint32_t crypto_powerdown(void)
 //
 // Function to determine the chip's TRIM version.
 //
+// return Status code.
+//
+// pui32TrimVer: The uint32_t that will receive the trim version number.
+//               If no valid trim version found, *pui32TrimVer returns as 0.
+//
+//
 //*****************************************************************************
 static uint32_t
 TrimVersionGet(uint32_t *pui32TrimVer)
@@ -534,12 +629,17 @@ TrimLVTGet(uint16_t *pui16LVTtrimHigh, uint16_t *pui16LVTtrimLow)
     uint16_t ui16LVTtrimHigh;
     uint16_t ui16LVTtrimLow;
 
+// #### INTERNAL BEGIN ####
+//    TODO - We need to determine the handling if this value is FFFFFFFF (unprogrammed).
+//           It is being programmed in production and contains the svt transistor voltage levels for setting
+//           the chip vddc voltage for pcm trimming.  This is only programmed on pcm trimmed parts.
+// #### INTERNAL END ####
     //
     // Get the LVT TRIM value and set the global variable.
     // This only needs to be done and verified once.
     //
     ui32Ret = am_hal_mram_info_read(1, AM_REG_INFO1_LVT_TRIMCODE_O / 4, 1, &g_ui32TrimLVT);
-    if ( (ui32Ret != 0) || (g_ui32TrimLVT == 0xFFFFFFFF) )
+    if ( (ui32Ret != AM_HAL_STATUS_SUCCESS) || (g_ui32TrimLVT == 0xFFFFFFFF) )
     {
         ui16LVTtrimHigh = 0xFFFF;   // Set to max value
         ui16LVTtrimLow  = 0xFFFF;   //  ""
@@ -569,12 +669,17 @@ TrimLVTGet(uint16_t *pui16LVTtrimHigh, uint16_t *pui16LVTtrimLow)
 //*****************************************************************************
 //
 //  VDDF_simobuck_boost(bool bBoostOn)
-//      bBoostOn = true to do the boost,
-//                 false to restore the boost to the original value.
+//      bBoostOn        = true to do the boost,
+//                        false to restore the boost to the original value.
+//      ui32boostPCM    = Boost value required if post-PCM since different
+//                        options require different values.
+//      ui32boostPrePCM = Boost value if pre-PCM.
 //
 //*****************************************************************************
 static uint32_t
-VDDF_simobuck_boost(bool bBoostOn)
+VDDF_simobuck_boost(bool bBoostOn,
+                    uint32_t ui32boostPCM,
+                    uint32_t ui32boostPrePCM)
 {
     uint32_t ui32booststeps, ui32TrimVer, ui32acttrimvddf;
 
@@ -593,15 +698,17 @@ VDDF_simobuck_boost(bool bBoostOn)
         //
         MCUCTRL->SIMOBUCK15_b.TRIMLATCHOVER = 1;
 
-        AM_CRITICAL_BEGIN
-        MCUCTRL->SIMOBUCK12_b.ACTTRIMVDDF = g_ui32origSimobuckVDDFtrim;
+        if ( MCUCTRL->SIMOBUCK12_b.ACTTRIMVDDF != g_ui32origSimobuckVDDFtrim )
+        {
+            AM_CRITICAL_BEGIN
+            MCUCTRL->SIMOBUCK12_b.ACTTRIMVDDF = g_ui32origSimobuckVDDFtrim;
 
-        //
-        // Delay to give voltage supply some time to transition to the new level
-        //
-        am_hal_delay_us(AM_HAL_PWRCTRL_VDDF_BOOST_DELAY);
-        AM_CRITICAL_END
-
+            //
+            // Delay to give voltage supply some time to transition to the new level
+            //
+            am_hal_delay_us(AM_HAL_PWRCTRL_VDDF_BOOST_DELAY);
+            AM_CRITICAL_END
+        }
         return AM_HAL_STATUS_SUCCESS;
     }
 
@@ -609,8 +716,8 @@ VDDF_simobuck_boost(bool bBoostOn)
     {
         TrimVersionGet(&ui32TrimVer);
         ui32booststeps = ( ui32TrimVer >= TRIMREV_PCM ) ?
-                            BUCK_VDDF_BOOST_STEPS_PCM :
-                            BUCK_VDDF_BOOST_STEPS_PREPCM;
+                            ui32boostPCM :
+                            ui32boostPrePCM;
 
         //
         // Increase VDDF the appropriate number of steps (or max it out).
@@ -620,19 +727,91 @@ VDDF_simobuck_boost(bool bBoostOn)
         ui32acttrimvddf = g_ui32origSimobuckVDDFtrim <= (MAX_BUCKVDDFTRIM - ui32booststeps) ?
                             (g_ui32origSimobuckVDDFtrim + ui32booststeps) : MAX_BUCKVDDFTRIM;
 
-        AM_CRITICAL_BEGIN
-        MCUCTRL->SIMOBUCK12_b.ACTTRIMVDDF = ui32acttrimvddf;
+        if ( MCUCTRL->SIMOBUCK12_b.ACTTRIMVDDF != ui32acttrimvddf )
+        {
+            AM_CRITICAL_BEGIN
+            MCUCTRL->SIMOBUCK12_b.ACTTRIMVDDF = ui32acttrimvddf;
 
-        //
-        // Delay to give voltage supply some time to transition to the new level
-        //
+            //
+            // Delay to give voltage supply some time to transition to the new level
+            //
+            am_hal_delay_us(AM_HAL_PWRCTRL_VDDF_BOOST_DELAY);
+            AM_CRITICAL_END
+        }
+    }
+
+    return AM_HAL_STATUS_SUCCESS;
+
+} // VDDF_simobuck_boost()
+
+#if AM_HAL_PWRCTL_SET_CORELDO_MEMLDO_IN_PARALLEL
+//*****************************************************************************
+//
+//  MemLDOActiveTrim_boost()
+//  Boost LDO active trim to the same level as simobuck boost. The trim boost
+//  level is based on the original factory trim version.
+//
+//  bBoost: false = Revert to the factory trim.
+//          true  = Boost LDO active trim according to factory trim version.
+//
+//*****************************************************************************
+static uint32_t
+MemLDOActiveTrim_boost(bool bBoost)
+{
+    uint32_t ui32MemLdoTrim, ui32CurrTrim, ui32TrimVer, ui32TrimStep;
+
+    //
+    // Check if original has been saved.
+    //
+    ui32MemLdoTrim = MCUCTRL->LDOREG2_b.MEMLDOACTIVETRIM;
+    ui32CurrTrim   = ui32MemLdoTrim;
+
+    if ( g_ui32origMEMLDOActiveTrim == 0xFFFFFFFF )
+    {
+        g_ui32origMEMLDOActiveTrim = ui32CurrTrim;
+    }
+
+    if ( !bBoost )
+    {
+        if ( ui32CurrTrim != g_ui32origMEMLDOActiveTrim )
+        {
+            MCUCTRL->LDOREG2_b.MEMLDOACTIVETRIM = g_ui32origMEMLDOActiveTrim;
+        }
+
+        return AM_HAL_STATUS_SUCCESS;
+    }
+
+    //
+    // Determine trim step
+    //
+    TrimVersionGet(&ui32TrimVer);
+
+    //
+    // Boost to same level as simobuck boost.
+    //
+    ui32TrimStep = ( ui32TrimVer >= TRIMREV_PCM ) ?
+                        BUCK_VDDF_BOOST_STEPS_PCM :
+                        BUCK_VDDF_BOOST_STEPS_PREPCM;
+
+    //
+    // Increase LDO
+    //
+    ui32MemLdoTrim = (ui32MemLdoTrim <= (MAX_LDOVDDFTRIM - ui32TrimStep)) ?
+                            (ui32MemLdoTrim + ui32TrimStep) : MAX_LDOVDDFTRIM;
+
+    if ( ui32CurrTrim != ui32MemLdoTrim )
+    {
+        AM_CRITICAL_BEGIN
+        MCUCTRL->LDOREG2_b.MEMLDOACTIVETRIM = ui32MemLdoTrim;
+
         am_hal_delay_us(AM_HAL_PWRCTRL_VDDF_BOOST_DELAY);
         AM_CRITICAL_END
     }
 
     return AM_HAL_STATUS_SUCCESS;
 
-} // VDDF_simobuck_boost()
+} // MemLDOActiveTrim_boost()
+#endif // AM_HAL_PWRCTL_SET_CORELDO_MEMLDO_IN_PARALLEL
 
 //*****************************************************************************
 //
@@ -710,6 +889,42 @@ am_hal_util_write_and_wait_timer_init(uint32_t ui32Delayus)
 // Prototype the assembly function.
 //
 typedef void (*storeAndWFIfunc_t)(uint32_t ui32Val, uint32_t *pAddr);
+// #### INTERNAL BEGIN ####
+#if 0 // "const" version
+#if (defined (__ARMCC_VERSION)) && (__ARMCC_VERSION < 6000000)
+__align(16)
+#define WA_ATTRIB
+#elif (defined (__ARMCC_VERSION)) && (__ARMCC_VERSION >= 6000000)
+#warning This attribute is not yet tested on ARM6.
+#define WA_ATTRIB   __attribute__ ((aligned (16)))
+#elif defined(__GNUC_STDC_INLINE__)
+#define WA_ATTRIB   __attribute__ ((aligned (16)))
+#elif defined(__IAR_SYSTEMS_ICC__)
+#pragma data_alignment = 16
+#define WA_ATTRIB
+#else
+#error Unknown compiler.
+#endif
+
+static const
+uint16_t storeAndWFI[16] WA_ATTRIB =
+{
+    //
+    // r0: Value to be written to the location specified in the 2nd argument.
+    // r1: Address of the location to be written.
+    // r2: 0x0 or addr of the SYNC_READ reg (performs a dummy read if non-zero)
+    //
+    // Begin 1st line buffer
+    0x6008,             // str r0, [r1]
+    0xF3BF, 0x8F4F,     // DSB
+    0xBF30,             // WFI
+    0xF3BF, 0x8F6F,     // ISB
+    0x4770,             // bx lr
+    0xBF00,             // nop
+};
+storeAndWFIfunc_t storeAndWFIfunc = (storeAndWFIfunc_t)((uint8_t *)storeAndWFI + 1);
+#endif // 0
+// #### INTERNAL END ####
 
 #if (defined (__ARMCC_VERSION)) && (__ARMCC_VERSION < 6000000)
 __align(16)
@@ -742,7 +957,6 @@ uint16_t storeAndWFIRAM[16] WA_ATTRIB =
     0x4770,             // bx lr
     0xBF00,             // nop
 };
-
 
 //
 // Prototype the assembly function.
@@ -859,7 +1073,14 @@ am_hal_util_write_and_wait(uint32_t *pAddr, uint32_t ui32Mask, uint32_t ui32Val,
 
 } // am_hal_util_write_and_wait()
 
-
+// #### INTERNAL BEGIN ####
+#if 0   // As of 08/20/21, there is agreement that the workarounds have become
+        // too complex to be able to safely back out now.
+// ****************************************************************************
+//
+//  backout_mcu_mode_select()
+//
+// ****************************************************************************
 typedef struct
 {
     am_hal_pwrctrl_mcu_mode_e ePowerMode;
@@ -870,6 +1091,9 @@ typedef struct
     uint32_t PWRSW1_USEVDDF4VDDRCPUINHP;
 } pwrctrl_state_restore_t;
 
+// #### INTERNAL BEGIN ####
+// REH Review: Should we remove the backout attempt? It doesn't seem useful now with all the various workarounds.
+// #### INTERNAL END ####
 static void
 backout_mcu_mode_select(pwrctrl_state_restore_t *psSettings)
 {
@@ -913,83 +1137,41 @@ backout_mcu_mode_select(pwrctrl_state_restore_t *psSettings)
     //
     am_hal_delay_us(10);
 } // backout_mcu_mode_select()
-
-
+#endif // 0
+// #### INTERNAL END ####
+// ****************************************************************************
+//
+//  VDDC_simobuck_boost()
+//
+// ****************************************************************************
 static uint32_t
-vddc_vddf_boost(void)
+VDDC_simobuck_boost(uint32_t ui32VDDCboostcode)
 {
-#if AM_HAL_PWRCTL_BOOST_VDDC
-    uint32_t ui32Status;
-    bool bDoVDDCboost = false;
-    uint32_t ui32TrimVer = 0xFFFFFFFF;
-    uint16_t ui16LVTtrimHigh = 0xFFFF;
-    uint16_t ui16LVTtrimLow = 0xFFFF;
-    uint32_t VDDCboostCode = 0;
-
-    //
-    // Get the Apollo4 device trim version.
-    //
-    ui32Status = TrimVersionGet(&ui32TrimVer);
-    if ( ui32Status != AM_HAL_STATUS_SUCCESS )
+    if ( g_ui32origSimobuckVDDCtrim == 0xFFFFFFFF )
     {
-        return ui32Status;
-    }
-
-    if ( APOLLO4_GE_B1 && (ui32TrimVer != 0) )
-    {
-        if ( ui32TrimVer >= TRIMREV_PCM )
+        if ( !g_bVDDCbuckboosted )
         {
             //
-            // Get the Apollo4 LVT trim value.
+            // Set g_bVDDCbuckboosted to be true for VDDC voltage reverting before entering deepsleep
             //
-            ui32Status = TrimLVTGet(&ui16LVTtrimHigh, &ui16LVTtrimLow);
-            if (AM_HAL_STATUS_SUCCESS != ui32Status)
-            {
-                return ui32Status;
-            }
-
-            bDoVDDCboost = true;
-
-            if ( (ui16LVTtrimLow < 240) && (ui16LVTtrimHigh < 240) )
-            {
-                VDDCboostCode = 43;     // ~86mV boost
-            }
-            else
-            {
-                VDDCboostCode = 23;     // ~46mV boost
-            }
+            g_bVDDCbuckboosted =  true;
         }
-        else
+
+        //
+        // Get and save the original value the very first time.
+        // Apply voltage boost only for the very first time.
+        //
+        g_ui32origSimobuckVDDCtrim = MCUCTRL->VREFGEN2_b.TVRGVREFTRIM;
+
+        //
+        // SIMOBUCK trim adjustment
+        //
+        MCUCTRL->SIMOBUCK15_b.TRIMLATCHOVER = 1;
+        uint32_t ui32newvalVDDC = g_ui32origSimobuckVDDCtrim <= (MAX_BUCKVDDCTRIM - ui32VDDCboostcode) ?
+                        g_ui32origSimobuckVDDCtrim + ui32VDDCboostcode : MAX_BUCKVDDCTRIM;
+
+        if ( MCUCTRL->VREFGEN2_b.TVRGVREFTRIM != ui32newvalVDDC )
         {
-            bDoVDDCboost = false;
-        }
-    }
-
-    if ( bDoVDDCboost )
-    {
-        if ( g_ui32origSimobuckVDDCtrim == 0xFFFFFFFF )
-        {
-            if ( !g_bVDDCbuckboosted )
-            {
-                //
-                // Set g_bVDDCbuckboosted to be true for VDDC voltage reverting before entering deepsleep
-                //
-                g_bVDDCbuckboosted =  true;
-            }
-
-            //
-            // Get and save the original value the very first time.
-            // Apply voltage boost only for the very first time.
-            //
-            g_ui32origSimobuckVDDCtrim = MCUCTRL->VREFGEN2_b.TVRGVREFTRIM;
-
-            //
-            // SIMOBUCK trim adjustment
-            //
-            MCUCTRL->SIMOBUCK15_b.TRIMLATCHOVER = 1;
-            uint32_t ui32newvalVDDC = g_ui32origSimobuckVDDCtrim <= (MAX_BUCKVDDCTRIM - VDDCboostCode) ?
-                            g_ui32origSimobuckVDDCtrim + VDDCboostCode : MAX_BUCKVDDCTRIM;
-
             AM_CRITICAL_BEGIN
             MCUCTRL->VREFGEN2_b.TVRGVREFTRIM = ui32newvalVDDC;
 
@@ -1000,14 +1182,96 @@ vddc_vddf_boost(void)
             AM_CRITICAL_END
         }
     }
-#endif // AM_HAL_PWRCTL_BOOST_VDDC
-
-#if AM_HAL_PWRCTL_BOOST_VDDF_FOR_BOTH_LP_HP
-    VDDF_simobuck_boost(true);
-#endif  // AM_HAL_PWRCTL_BOOST_VDDF_FOR_BOTH_LP_HP
 
     return AM_HAL_STATUS_SUCCESS;
-}
+
+} // VDDC_simobuck_boost()
+
+// ****************************************************************************
+//
+//  vddc_vddf_boost()
+//
+// ****************************************************************************
+static uint32_t
+vddc_vddf_boost(void)
+{
+    uint32_t ui32Status;
+    uint32_t ui32TrimVer = 0;
+    uint32_t ui32VDDCboostCode = 0;
+    bool bDoVDDCboost = false;
+
+    //
+    // Get the Apollo4 device trim version.
+    //
+    ui32Status = TrimVersionGet(&ui32TrimVer);
+    if ( ui32Status != AM_HAL_STATUS_SUCCESS )
+    {
+        return ui32Status;
+    }
+
+#if AM_HAL_PWRCTL_BOOST_VDDC
+    uint16_t ui16LVTtrimHigh = 0xFFFF;
+    uint16_t ui16LVTtrimLow  = 0xFFFF;
+
+    if ( APOLLO4_GE_B1 && (ui32TrimVer >= TRIMREV_PCM) )
+    {
+        //
+        // Get the Apollo4 LVT trim value.
+        //
+        ui32Status = TrimLVTGet(&ui16LVTtrimHigh, &ui16LVTtrimLow);
+        if ( ui32Status != AM_HAL_STATUS_SUCCESS )
+        {
+            return ui32Status;
+        }
+
+        // #### INTERNAL BEGIN ####
+        // Note that some revB validation-lab-trimmed parts do not include PCM trimming.
+        //
+        // Boost PCM-trimmed parts to the same level as non-PCM parts.
+        //
+        // @Jamie Happ - provided info on the following logic:
+        // Huawei wanted VDDC to be at the same level for both PCM and
+        // non-PCM trimmed parts, regardless of split.  The VDDC voltage
+        // range for non-PCM trimmed parts is 690-720mV.  To keep the boost
+        // simple for PCM parts, we boost by either 80mV or 40mV dependent
+        // upon the PCM data. For parts with SVT NMOS and PMOS < 240, we
+        // boost by ~80mV (43 codes), which sets the VDDC voltage between
+        // 690-710mV.  All other parts (NMOS/PMOS >= 240) get boosted by
+        // ~40mV (23 codes), which sets the VDDC voltage between 690-720mV.
+        // @Jamie comment end.
+        // #### INTERNAL END ####
+        if ( (ui16LVTtrimLow < 240) && (ui16LVTtrimHigh < 240) )
+        {
+            ui32VDDCboostCode = 43;     // ~86mV boost
+        }
+        else
+        {
+            ui32VDDCboostCode = 23;     // ~46mV boost
+        }
+
+        bDoVDDCboost = true;
+    }
+#elif AM_HAL_PWRCTL_SET_CORELDO_MEMLDO_IN_PARALLEL
+    if ( ui32TrimVer >= TRIMREV_PCM )
+    {
+        ui32VDDCboostCode = 14;     // ~30mV boost
+        bDoVDDCboost = true;
+    }
+#endif // AM_HAL_PWRCTL_BOOST_VDDC || AM_HAL_PWRCTL_SET_CORELDO_MEMLDO_IN_PARALLEL
+
+    if ( bDoVDDCboost )
+    {
+        VDDC_simobuck_boost(ui32VDDCboostCode);
+    }
+
+#if AM_HAL_PWRCTL_BOOST_VDDF_FOR_BOTH_LP_HP
+    VDDF_simobuck_boost(true, BUCK_VDDF_BOOST_STEPS_PCM, BUCK_VDDF_BOOST_STEPS_PREPCM);
+#elif AM_HAL_PWRCTL_SET_CORELDO_MEMLDO_IN_PARALLEL
+    VDDF_simobuck_boost(true, BUCK_VDDF_BOOST_STEPS_PARALLEL_PCM, BUCK_VDDF_BOOST_STEPS_PARALLEL_PREPCM);
+#endif  // AM_HAL_PWRCTL_BOOST_VDDF_FOR_BOTH_LP_HP || AM_HAL_PWRCTL_SET_CORELDO_MEMLDO_IN_PARALLEL
+
+    return AM_HAL_STATUS_SUCCESS;
+} // vddc_vddf_boost()
 
 // ****************************************************************************
 //
@@ -1020,6 +1284,9 @@ am_hal_pwrctrl_mcu_mode_select(am_hal_pwrctrl_mcu_mode_e ePowerMode)
 {
     bool bApollo4B0;
     uint32_t ui32Status;
+
+// #### INTERNAL BEGIN ####
+#if 0 // As of 08/20/21, this is no longer feasible.
     pwrctrl_state_restore_t sSettings =
     {
         .ePowerMode = ePowerMode,
@@ -1029,7 +1296,8 @@ am_hal_pwrctrl_mcu_mode_select(am_hal_pwrctrl_mcu_mode_e ePowerMode)
         .MISC_USEHFRC2FQ192MHZ = 0,
         .PWRSW1_USEVDDF4VDDRCPUINHP = 0
     };
-
+#endif
+// #### INTERNAL END ####
 #ifndef AM_HAL_DISABLE_API_VALIDATION
     if ( (ePowerMode != AM_HAL_PWRCTRL_MCU_MODE_LOW_POWER)      &&
          (ePowerMode != AM_HAL_PWRCTRL_MCU_MODE_HIGH_PERFORMANCE) )
@@ -1057,6 +1325,8 @@ am_hal_pwrctrl_mcu_mode_select(am_hal_pwrctrl_mcu_mode_e ePowerMode)
 
     if ( bApollo4B0 )
     {
+// #### INTERNAL BEGIN ####
+#if 0 // As of 08/20/21, this is no longer feasible.
         //
         // Get current state
         //
@@ -1064,7 +1334,8 @@ am_hal_pwrctrl_mcu_mode_select(am_hal_pwrctrl_mcu_mode_e ePowerMode)
         sSettings.MISC_USEHFRC2FQ192MHZ = CLKGEN->MISC_b.USEHFRC2FQ192MHZ;
         sSettings.MISC_USEHFRC2FQ96MHZ  = CLKGEN->MISC_b.USEHFRC2FQ96MHZ;
         sSettings.PWRSW1_USEVDDF4VDDRCPUINHP = MCUCTRL->PWRSW1_b.USEVDDF4VDDRCPUINHP;
-
+#endif
+// #### INTERNAL END ####
         //
         // Check if we need to apply a workaround for 192MHz operation.
         //
@@ -1087,16 +1358,24 @@ am_hal_pwrctrl_mcu_mode_select(am_hal_pwrctrl_mcu_mode_e ePowerMode)
     //
     // Set the MCU power mode.
     //
-#if !AM_HAL_PWRCTL_BOOST_VDDF_FOR_BOTH_LP_HP
     if ( ePowerMode == AM_HAL_PWRCTRL_MCU_MODE_HIGH_PERFORMANCE )
     {
         //
         // Boost VDDF for High Performance mode
         //
+#if !AM_HAL_PWRCTL_BOOST_VDDF_FOR_BOTH_LP_HP
+// #### INTERNAL BEGIN ####
+#if 0 // As of 08/20/21, this is no longer feasible.
         sSettings.ui32StepMask |= 0x0002;
-        VDDF_simobuck_boost(true);
+#endif
+// #### INTERNAL END ####
+        VDDF_simobuck_boost(true, BUCK_VDDF_BOOST_STEPS_PCM, 3);
+#endif // AM_HAL_PWRCTL_BOOST_VDDF_FOR_BOTH_LP_HP
+
+#if AM_HAL_PWRCTL_SET_CORELDO_MEMLDO_IN_PARALLEL
+        MemLDOActiveTrim_boost(true);
+#endif  // AM_HAL_PWRCTL_SET_CORELDO_MEMLDO_IN_PARALLEL
     }
-#endif // !AM_HAL_PWRCTL_BOOST_VDDF_FOR_BOTH_LP_HP
 
 #ifdef AM_HAL_PWRCTL_HPLP_WA
     ui32Status = am_hal_util_write_and_wait((uint32_t*)&PWRCTRL->MCUPERFREQ,
@@ -1104,13 +1383,25 @@ am_hal_pwrctrl_mcu_mode_select(am_hal_pwrctrl_mcu_mode_e ePowerMode)
                                             AM_HAL_PWRCTL_HPLP_DELAY);
     if ( ui32Status != AM_HAL_STATUS_SUCCESS )
     {
+        //
+        // Caution: Reaching this point means the device is in an unpredictable
+        //          state and may not be able to recover.
+        //
+// #### INTERNAL BEGIN ####
+#if 0 // As of 08/20/21, this is no longer feasible.
         backout_mcu_mode_select(&sSettings);
+#endif
+// #### INTERNAL END ####
         return ui32Status;
     }
+// #### INTERNAL BEGIN ####
+#if 0 // As of 08/20/21, this is no longer feasible.
     sSettings.ui32StepMask |= 0x0004;
+#endif
+// #### INTERNAL END ####
 #else
     PWRCTRL->MCUPERFREQ_b.MCUPERFREQ = ePowerMode;
-#endif
+#endif // AM_HAL_PWRCTL_HPLP_WA
 
     //
     // Wait for the ACK
@@ -1129,21 +1420,33 @@ am_hal_pwrctrl_mcu_mode_select(am_hal_pwrctrl_mcu_mode_e ePowerMode)
     //
     // Check for timeout.
     //
-    if (AM_HAL_STATUS_SUCCESS != ui32Status)
+    if ( ui32Status != AM_HAL_STATUS_SUCCESS )
     {
+        //
+        // Caution: Reaching this point means the device is in an unpredictable
+        //          state and may not be able to recover.
+        //
+// #### INTERNAL BEGIN ####
+#if 0 // As of 08/20/21, this is no longer feasible.
         backout_mcu_mode_select(&sSettings);
+#endif
+// #### INTERNAL END ####
         return ui32Status;
     }
 
-#if !AM_HAL_PWRCTL_BOOST_VDDF_FOR_BOTH_LP_HP
     if ( ePowerMode == AM_HAL_PWRCTRL_MCU_MODE_LOW_POWER )
     {
         //
         // Revert the boost VDDF when transitioning to Low Power  mode
         //
-        VDDF_simobuck_boost(false);
+#if AM_HAL_PWRCTL_SET_CORELDO_MEMLDO_IN_PARALLEL
+        MemLDOActiveTrim_boost(false);
+#endif // AM_HAL_PWRCTL_SET_CORELDO_MEMLDO_IN_PARALLEL
+
+#if !AM_HAL_PWRCTL_BOOST_VDDF_FOR_BOTH_LP_HP
+        VDDF_simobuck_boost(false, BUCK_VDDF_BOOST_STEPS_PCM, 3);
+#endif  // AM_HAL_PWRCTL_BOOST_VDDF_FOR_BOTH_LP_HP || AM_HAL_PWRCTL_SET_CORELDO_MEMLDO_IN_PARALLEL
     }
-#endif  // AM_HAL_PWRCTL_BOOST_VDDF_FOR_BOTH_LP_HP
 
     if ( bApollo4B0 )
     {
@@ -1179,7 +1482,15 @@ am_hal_pwrctrl_mcu_mode_select(am_hal_pwrctrl_mcu_mode_e ePowerMode)
     }
     else
     {
+        //
+        // Caution: Reaching this point means the device is in an unpredictable
+        //          state and may not be able to recover.
+        //
+// #### INTERNAL BEGIN ####
+#if 0 // As of 08/20/21, this is no longer feasible.
         backout_mcu_mode_select(&sSettings);
+#endif
+// #### INTERNAL END ####
         return AM_HAL_STATUS_FAIL;
     }
 
@@ -2120,8 +2431,16 @@ am_hal_pwrctrl_low_power_init(void)
     am_hal_pwrctrl_sram_config((am_hal_pwrctrl_sram_memcfg_t *)&g_DefaultSRAMCfg);
 
     //
+    // Make sure the original values of all the power-related regs are saved.
+    //
+    preserve_orig_reg_values();
+
+    //
     // Enable all the clock gating optimizations for Rev B silicon.
     //
+// #### INTERNAL BEGIN ####
+//  CLKGEN->MISC_b.CLKGENMISCSPARES = 0xFF;
+// #### INTERNAL END ####
     CLKGEN->MISC_b.CLKGENMISCSPARES = 0x3E;  // Do not enable DAXI Clock Gating for now.
 
     //
@@ -2156,10 +2475,14 @@ am_hal_pwrctrl_low_power_init(void)
     //
     // Additional required settings
     //
+// #### INTERNAL BEGIN ####
+// HSP20-429 PWRONCLKENDISP Needed for DC workaround, disables revB clock enable
+//           during reset, basically reverting to revA behavior.
+// #### INTERNAL END ####
     CLKGEN->MISC_b.PWRONCLKENDISP = 1;
 
 #if defined(AM_HAL_PWRCTRL_LFRC_SIMOBUCK_TRIM_WA)
-    if (!APOLLO4_GE_B2)
+    if ( !APOLLO4_GE_B2 )
     {
       //
       // Set and enable LFRC trims
@@ -2170,6 +2493,13 @@ am_hal_pwrctrl_low_power_init(void)
     }
 #endif
 
+    // #### INTERNAL BEGIN ####
+    // HSP20-431 Change #4 Begin.
+    //
+    // Original hard code change for HSP20-400
+    // DSPRAM setting change for HSP20-400
+    // Initialize DSPRAM, SSRAM trims for proper retention operation.
+    // #### INTERNAL END ####
     //
     // Initialize DSPRAM, SSRAM trims for proper retention operation.
     //
@@ -2183,8 +2513,11 @@ am_hal_pwrctrl_low_power_init(void)
                         _VAL2FLD(MCUCTRL_PWRSW0_PWRSWVDDMCPUOVERRIDE, 1)    |
                         _VAL2FLD(MCUCTRL_PWRSW0_PWRSWVDDMDSP0STATSEL, 1)    |
                         _VAL2FLD(MCUCTRL_PWRSW0_PWRSWVDDMDSP1STATSEL, 1);
+    // #### INTERNAL BEGIN ####
+    // HSP20-431 Change #4 End.
+    // #### INTERNAL END ####
 
-#if AM_HAL_PWRCTL_BOOST_VDDC
+#if AM_HAL_PWRCTL_BOOST_VDDC_LDO
     //
     // If LDO, do some trim updates.
     //
@@ -2235,11 +2568,570 @@ am_hal_pwrctrl_low_power_init(void)
             }
         }
     }
-#endif // AM_HAL_PWRCTL_BOOST_VDDC
+#endif // AM_HAL_PWRCTL_BOOST_VDDC_LDO
 
     return AM_HAL_STATUS_SUCCESS;
 
 } // am_hal_pwrctrl_low_power_init()
+
+
+#if AM_HAL_PWRCTL_SET_CORELDO_MEMLDO_IN_PARALLEL
+// ****************************************************************************
+//
+//  buck_interval_check()
+//
+// ****************************************************************************
+// #### INTERNAL BEGIN ####
+// HSP20-501 use 2 timer to measure the simobuck pulse intervals
+// #### INTERNAL END ####
+#define BUCK_PULSE_TIMER_INST               13
+#define BUCK_INTERVAL_TIMER_INST            8
+#define BUCK_CH_VDDC                        0
+#define BUCK_CH_VDDF                        1
+#define BUCK_VDDC_INTERVAL_US_MIN           50
+#define BUCK_VDDF_INTERVAL_US_MIN           50
+#define BUCK_VDDC_INTERVAL_US_MAX           150
+#define BUCK_VDDF_INTERVAL_US_MAX           150
+#define BUCK_INTERVAL_CHECK_TIMEOUT_MAX     10000   // each loop is ~1us, timeout in 10ms
+#define BUCK_INTERVAL_CHECK_PULSE_COUNT     10      // check for this number of buck pulses
+
+extern uint32_t timer_config_b1(uint32_t ui32TimerNumber,
+                                am_hal_timer_config_t *psTimerConfig);
+
+static uint32_t
+buck_interval_check(uint32_t *pui32IntervalUs, uint32_t channel)
+{
+    am_hal_timer_clock_e eBuckInput;
+    uint32_t ui32BuckIntervalUsMin  = 0;
+    uint32_t ui32BuckIntervalUsMax  = 0;
+    uint32_t ui32IntervalUs         = 0;
+    uint32_t ui32BuckPulseRead      = 0;
+    uint32_t ui32BuckIntervalRead   = 0;
+    uint32_t ui32TimeoutLoopCount   = BUCK_INTERVAL_CHECK_TIMEOUT_MAX;
+
+    if (PWRCTRL->MCUPERFREQ_b.MCUPERFSTATUS == AM_HAL_PWRCTRL_MCU_MODE_HIGH_PERFORMANCE)
+    {
+        ui32TimeoutLoopCount = ui32TimeoutLoopCount*2;  // Scale the loop timeout for 192MHz vs. 96MHz.
+    }
+
+#ifndef AM_HAL_DISABLE_API_VALIDATION
+    //
+    // Validate the parameters to the function
+    //
+    if (pui32IntervalUs == NULL)
+    {
+        return AM_HAL_STATUS_INVALID_ARG;
+    }
+#endif // !AM_HAL_DISABLE_API_VALIDATION
+
+    if (channel == BUCK_CH_VDDC)
+    {
+        eBuckInput = AM_HAL_TIMER_CLOCK_BUCKC;
+        ui32BuckIntervalUsMin = BUCK_VDDC_INTERVAL_US_MIN;
+        ui32BuckIntervalUsMax = BUCK_VDDC_INTERVAL_US_MAX;
+
+    }
+    else if (channel == BUCK_CH_VDDF)
+    {
+        eBuckInput = AM_HAL_TIMER_CLOCK_BUCKF;
+        ui32BuckIntervalUsMin = BUCK_VDDF_INTERVAL_US_MIN;
+        ui32BuckIntervalUsMax = BUCK_VDDF_INTERVAL_US_MAX;
+    }
+    else
+    {
+        return AM_HAL_STATUS_INVALID_ARG;
+    }
+
+    //
+    // Check if SIMOBUCK is enabled
+    //
+    if (PWRCTRL->VRCTRL_b.SIMOBUCKEN == 0)
+    {
+        // SIMOBUCK is not turned on
+        return AM_HAL_STATUS_INVALID_OPERATION;
+    }
+
+    //
+    // Check if LDOs are off
+    //
+    uint32_t ui32LdoStatus = 0;
+    ui32LdoStatus = _VAL2FLD(MCUCTRL_VRCTRL_CORELDOACTIVE, 1)       |
+                    _VAL2FLD(MCUCTRL_VRCTRL_CORELDOACTIVEEARLY, 1)  |
+                    _VAL2FLD(MCUCTRL_VRCTRL_CORELDOPDNB, 1)         |
+                    _VAL2FLD(MCUCTRL_VRCTRL_CORELDOOVER, 1)         |
+                    _VAL2FLD(MCUCTRL_VRCTRL_MEMLDOACTIVE, 1)        |
+                    _VAL2FLD(MCUCTRL_VRCTRL_MEMLDOACTIVEEARLY, 1)   |
+                    _VAL2FLD(MCUCTRL_VRCTRL_MEMLDOPDNB, 1)          |
+                    _VAL2FLD(MCUCTRL_VRCTRL_MEMLDOOVER, 1);
+
+
+    if (MCUCTRL->VRCTRL & ui32LdoStatus)
+    {
+        // LDOs are on
+        return AM_HAL_STATUS_INVALID_OPERATION;
+    }
+
+    //
+    // Initialize timers
+    //
+    am_hal_timer_clear_stop(BUCK_PULSE_TIMER_INST);
+    am_hal_timer_stop(BUCK_PULSE_TIMER_INST);
+    am_hal_timer_reset_config(BUCK_PULSE_TIMER_INST);
+
+    am_hal_timer_config_t timerConfig_pulse;
+    am_hal_timer_default_config_set(&timerConfig_pulse);
+    timerConfig_pulse.eInputClock       = eBuckInput;
+    timerConfig_pulse.eFunction         = AM_HAL_TIMER_FN_UPCOUNT;
+    timer_config_b1(BUCK_PULSE_TIMER_INST, &timerConfig_pulse);
+
+    am_hal_timer_clear_stop(BUCK_INTERVAL_TIMER_INST);
+    am_hal_timer_stop(BUCK_INTERVAL_TIMER_INST);
+    am_hal_timer_reset_config(BUCK_INTERVAL_TIMER_INST);
+
+    am_hal_timer_config_t timerConfig_interval;
+    am_hal_timer_default_config_set(&timerConfig_interval);
+    timerConfig_interval.eInputClock    = AM_HAL_TIMER_CLOCK_HFRC_DIV16;
+    timerConfig_interval.eFunction      = AM_HAL_TIMER_FN_UPCOUNT;
+    timer_config_b1(BUCK_INTERVAL_TIMER_INST, &timerConfig_interval);
+
+    //
+    // Start timers and measure interval
+    //
+    AM_CRITICAL_BEGIN
+    am_hal_timer_start(BUCK_INTERVAL_TIMER_INST);
+    am_hal_timer_start(BUCK_PULSE_TIMER_INST);
+    AM_CRITICAL_END
+
+    volatile uint32_t ui32PrimaskSave;
+    while (ui32TimeoutLoopCount--)
+    {
+        ui32PrimaskSave = am_hal_interrupt_master_disable();   // enter critical section
+        ui32BuckPulseRead = am_hal_timer_read(BUCK_PULSE_TIMER_INST);
+        if (ui32BuckPulseRead >= BUCK_INTERVAL_CHECK_PULSE_COUNT)
+        {
+            // loop finished
+            ui32BuckIntervalRead = am_hal_timer_read(BUCK_INTERVAL_TIMER_INST);
+            am_hal_interrupt_master_set(ui32PrimaskSave);      // exit critical section
+            break;
+        }
+        am_hal_interrupt_master_set(ui32PrimaskSave);          // exit critical section
+    }
+
+    //
+    // Reset timers
+    //
+    am_hal_timer_clear_stop(BUCK_PULSE_TIMER_INST);
+    am_hal_timer_stop(BUCK_PULSE_TIMER_INST);
+    am_hal_timer_reset_config(BUCK_PULSE_TIMER_INST);
+    am_hal_timer_clear_stop(BUCK_INTERVAL_TIMER_INST);
+    am_hal_timer_stop(BUCK_INTERVAL_TIMER_INST);
+    am_hal_timer_reset_config(BUCK_INTERVAL_TIMER_INST);
+
+    if (ui32BuckIntervalRead == 0)
+    {
+        // interval not detected correctly
+        return AM_HAL_STATUS_FAIL;
+    }
+    else
+    {
+        // convert interval into us
+        ui32IntervalUs = ui32BuckIntervalRead / 6;  // Counting clock is HFRC/16, 6MHz
+
+        if (ui32IntervalUs < ui32BuckIntervalUsMin)
+        {
+            // guarantee a min interval
+            ui32IntervalUs = ui32BuckIntervalUsMin;
+        }
+
+        if (ui32IntervalUs > ui32BuckIntervalUsMax)
+        {
+            // guarantee a min interval
+            ui32IntervalUs = ui32BuckIntervalUsMax;
+        }
+
+        *pui32IntervalUs = ui32IntervalUs;
+        return AM_HAL_STATUS_SUCCESS;
+    }
+} // buck_interval_check()
+
+// ****************************************************************************
+//
+// Helper functions for coreldo and memldo enable and parallel operation
+//
+// ****************************************************************************
+// ****************************************************************************
+//
+//  memldo_vddf_parallel_set()
+//  Turn on MEMLDO in parallel with VDDF SIMOBUCK.
+//
+// ****************************************************************************
+static void
+memldo_vddf_parallel_set(uint32_t ui32BuckIntervalUs)
+{
+    uint32_t ui32BuckPulseRead0;
+    uint32_t ui32BuckPulseRead1;                     // set initial value different
+    uint32_t ui32MemLdoTrim     = 0;
+    int32_t  i32TrimStep        = 0;
+
+    //
+    // use timer to capture buck pulse here
+    //
+    am_hal_timer_config_t timerConfig;
+    am_hal_timer_default_config_set(&timerConfig);
+    timerConfig.eInputClock = AM_HAL_TIMER_CLOCK_BUCKF;
+    timerConfig.eFunction   = AM_HAL_TIMER_FN_UPCOUNT;
+    timer_config_b1(BUCK_PULSE_TIMER_INST, &timerConfig);
+    am_hal_timer_start(BUCK_PULSE_TIMER_INST);
+
+    ui32BuckPulseRead0 = am_hal_timer_read(BUCK_PULSE_TIMER_INST);
+    am_hal_delay_us(ui32BuckIntervalUs);
+    ui32BuckPulseRead1 = am_hal_timer_read(BUCK_PULSE_TIMER_INST);
+
+    if (ui32BuckPulseRead0 == ui32BuckPulseRead1)
+    {
+        //
+        // LDO is higher than buck voltage
+        //
+        i32TrimStep -= TRIM_STEP;
+    }
+    else
+    {
+        //
+        // LDO is lower than buck voltage
+        //
+        i32TrimStep += TRIM_STEP;
+    }
+
+    while (true)
+    {
+        ui32MemLdoTrim = MCUCTRL->LDOREG2_b.MEMLDOACTIVETRIM;
+
+        if ( g_ui32origMEMLDOActiveTrim == 0xFFFFFFFF )
+        {
+            g_ui32origMEMLDOActiveTrim = ui32MemLdoTrim;
+        }
+
+        if ( i32TrimStep > 0 )
+        {
+            //
+            // increasing LDO
+            //
+            if ( (ui32MemLdoTrim == MAX_LDOVDDFTRIM) || (ui32BuckPulseRead0 == ui32BuckPulseRead1) )
+            {
+                break;
+            }
+
+            ui32MemLdoTrim = (ui32MemLdoTrim <= (MAX_LDOVDDFTRIM - i32TrimStep)) ?
+                                    (ui32MemLdoTrim + i32TrimStep) : MAX_LDOVDDFTRIM;
+        }
+
+        if ( i32TrimStep < 0 )
+        {
+            //
+            // decreasing LDO
+            //
+            if ( (ui32MemLdoTrim <= MIN_LDOVDDFTRIM) || (ui32BuckPulseRead0 != ui32BuckPulseRead1) )
+            {
+                break;
+            }
+
+            ui32MemLdoTrim = (ui32MemLdoTrim >= (MIN_LDOVDDFTRIM - i32TrimStep)) ?
+                                    (ui32MemLdoTrim + i32TrimStep) : MIN_LDOVDDFTRIM;
+        }
+
+        MCUCTRL->LDOREG2_b.MEMLDOACTIVETRIM = ui32MemLdoTrim;
+
+        ui32BuckPulseRead0 = am_hal_timer_read(BUCK_PULSE_TIMER_INST);
+        am_hal_delay_us(ui32BuckIntervalUs);
+        ui32BuckPulseRead1 = am_hal_timer_read(BUCK_PULSE_TIMER_INST);
+    }
+
+    //
+    // Out of the loop, make LDO voltage lower for parallel operation
+    //
+    if ( ui32MemLdoTrim > (MEMLDO_STEPDOWN_TRIMCODE + MIN_LDOVDDFTRIM) )
+    {
+        ui32MemLdoTrim -= MEMLDO_STEPDOWN_TRIMCODE;
+    }
+    else
+    {
+        ui32MemLdoTrim = MIN_LDOVDDFTRIM;
+    }
+
+    //
+    // Apply setting and stop the timer
+    //
+    MCUCTRL->LDOREG2_b.MEMLDOACTIVETRIM = ui32MemLdoTrim;
+
+    am_hal_timer_clear_stop(BUCK_PULSE_TIMER_INST);
+    am_hal_timer_stop(BUCK_PULSE_TIMER_INST);
+    am_hal_timer_reset_config(BUCK_PULSE_TIMER_INST);
+
+} // memldo_vddf_parallel_set()
+
+// ****************************************************************************
+//
+//  coreldo_vddc_parallel_set()
+//  Turn on CORELDO in parallel with VDDC SIMOBUCK.
+//
+// ****************************************************************************
+static void
+coreldo_vddc_parallel_set(uint32_t ui32BuckIntervalUs)
+{
+    uint32_t ui32BuckPulseRead0;
+    uint32_t ui32BuckPulseRead1;                     // set initial value different
+    uint32_t ui32CoreLdoTrim    = 0;
+    int32_t  i32TrimStep        = 0;
+
+    //
+    // use timer capture buck pulse here
+    //
+    am_hal_timer_config_t timerConfig;
+    am_hal_timer_default_config_set(&timerConfig);
+    timerConfig.eInputClock = AM_HAL_TIMER_CLOCK_BUCKC;
+    timerConfig.eFunction   = AM_HAL_TIMER_FN_UPCOUNT;
+    timer_config_b1(BUCK_PULSE_TIMER_INST, &timerConfig);
+    am_hal_timer_start(BUCK_PULSE_TIMER_INST);
+
+    ui32BuckPulseRead0 = am_hal_timer_read(BUCK_PULSE_TIMER_INST);
+    am_hal_delay_us(ui32BuckIntervalUs);
+    ui32BuckPulseRead1 = am_hal_timer_read(BUCK_PULSE_TIMER_INST);
+
+    if ( ui32BuckPulseRead0 == ui32BuckPulseRead1 )
+    {
+        //
+        // LDO is higher than buck voltage
+        //
+        i32TrimStep -= TRIM_STEP;
+    }
+    else
+    {
+        //
+        // LDO is lower than buck voltage
+        //
+        i32TrimStep += TRIM_STEP;
+    }
+
+    while (true)
+    {
+        ui32CoreLdoTrim = MCUCTRL->LDOREG1_b.CORELDOACTIVETRIM;
+
+        if (i32TrimStep > 0)
+        {
+            //
+            // increasing LDO
+            //
+            if ((ui32CoreLdoTrim == MAX_LDOVDDCTRIM) || (ui32BuckPulseRead0 == ui32BuckPulseRead1))
+            {
+                break;
+            }
+
+            ui32CoreLdoTrim = (ui32CoreLdoTrim <= (MAX_LDOVDDCTRIM - i32TrimStep)) ?
+                                    (ui32CoreLdoTrim + i32TrimStep) : MAX_LDOVDDCTRIM;
+        }
+
+        if (i32TrimStep < 0)
+        {
+            //
+            // decreasing LDO
+            //
+            if ( (ui32CoreLdoTrim <= MIN_LDOVDDCTRIM) || (ui32BuckPulseRead0 != ui32BuckPulseRead1) )
+            {
+                break;
+            }
+
+            ui32CoreLdoTrim = (ui32CoreLdoTrim >= (MIN_LDOVDDCTRIM - i32TrimStep)) ?
+                                    (ui32CoreLdoTrim + i32TrimStep) : MIN_LDOVDDCTRIM;
+        }
+
+        if ( i32TrimStep == 0 )
+        {
+            // something wrong here.
+            break;
+        }
+
+        MCUCTRL->LDOREG1_b.CORELDOACTIVETRIM = ui32CoreLdoTrim;
+
+        ui32BuckPulseRead0 = am_hal_timer_read(BUCK_PULSE_TIMER_INST);
+        am_hal_delay_us(ui32BuckIntervalUs);
+        ui32BuckPulseRead1 = am_hal_timer_read(BUCK_PULSE_TIMER_INST);
+    }
+
+    //
+    // Out of the loop, make LDO voltage lower for parallel operation
+    //
+    if ( ui32CoreLdoTrim > (CORELDO_STEPDOWN_TRIMCODE + MIN_LDOVDDCTRIM) )
+    {
+        ui32CoreLdoTrim -= CORELDO_STEPDOWN_TRIMCODE;
+    }
+    else
+    {
+        ui32CoreLdoTrim = MIN_LDOVDDCTRIM;
+    }
+
+    //
+    // Apply setting and stop the timer
+    //
+    MCUCTRL->LDOREG1_b.CORELDOACTIVETRIM = ui32CoreLdoTrim;
+
+    am_hal_timer_clear_stop(BUCK_PULSE_TIMER_INST);
+    am_hal_timer_stop(BUCK_PULSE_TIMER_INST);
+    am_hal_timer_reset_config(BUCK_PULSE_TIMER_INST);
+
+} // coreldo_vddc_parallel_set()
+
+// ****************************************************************************
+//
+//  coreldo_enable()
+//  Function to set CORELDOTEMPCOTRIM and force CORELDO to be active
+//
+// ****************************************************************************
+void
+coreldo_enable(void)
+{
+    //
+    // Change CORELDOTEMPCOTRIM to 4
+    // In order to give the CORELDO enough voltage range.
+    // However, CORELDOOVER must be the last bit set.
+    //
+    MCUCTRL->LDOREG1_b.CORELDOTEMPCOTRIM  = 4;
+
+    //
+    // Enable coreldo
+    // There are timing constraints involved in getting this done,
+    // so optimize as much as possible.
+    //
+    MCUCTRL->VRCTRL_b.CORELDOCOLDSTARTEN  = 0;
+// #### INTERNAL BEGIN ####
+#if 1
+// #### INTERNAL END ####
+    MCUCTRL->VRCTRL |=
+        MCUCTRL_VRCTRL_CORELDOACTIVE_Msk        |
+        MCUCTRL_VRCTRL_CORELDOACTIVEEARLY_Msk   |
+        MCUCTRL_VRCTRL_CORELDOPDNB_Msk;
+// #### INTERNAL BEGIN ####
+#else
+    MCUCTRL->VRCTRL_b.CORELDOACTIVE       = 1;
+    MCUCTRL->VRCTRL_b.CORELDOACTIVEEARLY  = 1;
+    MCUCTRL->VRCTRL_b.CORELDOPDNB         = 1;
+#endif
+// #### INTERNAL END ####
+    MCUCTRL->VRCTRL_b.CORELDOOVER         = 1;
+}
+
+// ****************************************************************************
+//
+//  coreldo_disable()
+//  Function to turn off coreldo
+//
+// ****************************************************************************
+void
+coreldo_disable(void)
+{
+    //
+    // Disable coreldo
+    //
+    MCUCTRL->VRCTRL_b.CORELDOOVER         = 0;
+// #### INTERNAL BEGIN ####
+#if 1
+// #### INTERNAL END ####
+    MCUCTRL->VRCTRL &=
+        ~(MCUCTRL_VRCTRL_CORELDOACTIVE_Msk      |
+          MCUCTRL_VRCTRL_CORELDOACTIVEEARLY_Msk |
+          MCUCTRL_VRCTRL_CORELDOPDNB_Msk);
+// #### INTERNAL BEGIN ####
+#else
+    MCUCTRL->VRCTRL_b.CORELDOACTIVE       = 0;
+    MCUCTRL->VRCTRL_b.CORELDOACTIVEEARLY  = 0;
+    MCUCTRL->VRCTRL_b.CORELDOPDNB         = 0;
+#endif
+// #### INTERNAL END ####
+}
+
+// ****************************************************************************
+//
+//  memldo_enable()
+//  Function to force MEMLDO to be active
+//
+// ****************************************************************************
+void
+memldo_enable(void)
+{
+    //
+    // Enable memldo
+    // There are timing constraints involved in getting this done,
+    // so optimize as much as possible.
+    // However, MEMLDOOVER must be the last bit set.
+    //
+    MCUCTRL->VRCTRL_b.MEMLDOCOLDSTARTEN   = 0;
+// #### INTERNAL BEGIN ####
+#if 1
+// #### INTERNAL END ####
+    MCUCTRL->VRCTRL |=
+        MCUCTRL_VRCTRL_MEMLDOACTIVE_Msk         |
+        MCUCTRL_VRCTRL_MEMLDOACTIVEEARLY_Msk    |
+        MCUCTRL_VRCTRL_MEMLDOPDNB_Msk;
+// #### INTERNAL BEGIN ####
+#else
+    MCUCTRL->VRCTRL_b.MEMLDOACTIVE        = 1;
+    MCUCTRL->VRCTRL_b.MEMLDOACTIVEEARLY   = 1;
+    MCUCTRL->VRCTRL_b.MEMLDOPDNB          = 1;
+#endif
+// #### INTERNAL END ####
+    MCUCTRL->VRCTRL_b.MEMLDOOVER          = 1;
+}
+
+// ****************************************************************************
+//
+//  memldo_disable()
+//  Function to turn off memldo
+//
+// ****************************************************************************
+void
+memldo_disable(void)
+{
+    //
+    // disable memldo
+    //
+    MCUCTRL->VRCTRL_b.MEMLDOOVER          = 0;
+// #### INTERNAL BEGIN ####
+#if 1
+// #### INTERNAL END ####
+    MCUCTRL->VRCTRL &=
+        ~(MCUCTRL_VRCTRL_MEMLDOACTIVE_Msk         |
+          MCUCTRL_VRCTRL_MEMLDOACTIVEEARLY_Msk    |
+          MCUCTRL_VRCTRL_MEMLDOPDNB_Msk);
+// #### INTERNAL BEGIN ####
+#else
+    MCUCTRL->VRCTRL_b.MEMLDOACTIVE        = 0;
+    MCUCTRL->VRCTRL_b.MEMLDOACTIVEEARLY   = 0;
+    MCUCTRL->VRCTRL_b.MEMLDOPDNB          = 0;
+#endif
+// #### INTERNAL END ####
+}
+#endif // AM_HAL_PWRCTL_SET_CORELDO_MEMLDO_IN_PARALLEL
+
+void
+simobuck_force_active(void)
+{
+    //
+    // Force SIMOBUCK into active mode. SIMOBUCKOVER must be set last.
+    //
+    MCUCTRL->VRCTRL_b.SIMOBUCKPDNB   = 1;
+    MCUCTRL->VRCTRL_b.SIMOBUCKRSTB   = 1;
+    MCUCTRL->VRCTRL_b.SIMOBUCKACTIVE = 1;
+    MCUCTRL->VRCTRL_b.SIMOBUCKOVER   = 1;
+}
+
+void
+simobuck_force_disable(void)
+{
+    MCUCTRL->VRCTRL_b.SIMOBUCKOVER   = 0;
+    MCUCTRL->VRCTRL_b.SIMOBUCKACTIVE = 0;
+    MCUCTRL->VRCTRL_b.SIMOBUCKRSTB   = 0;
+    MCUCTRL->VRCTRL_b.SIMOBUCKPDNB   = 0;
+}
+
 
 // ****************************************************************************
 //
@@ -2251,11 +3143,17 @@ uint32_t
 am_hal_pwrctrl_control(am_hal_pwrctrl_control_e eControl, void *pArgs)
 {
     uint32_t ui32ReturnStatus = AM_HAL_STATUS_SUCCESS;
+#if AM_HAL_PWRCTL_SET_CORELDO_MEMLDO_IN_PARALLEL
+    uint32_t ui32BuckVddcIntervalUs = 0;
+    uint32_t ui32BuckVddfIntervalUs = 0;
+#endif // AM_HAL_PWRCTL_SET_CORELDO_MEMLDO_IN_PARALLEL
 
     switch ( eControl )
     {
         case AM_HAL_PWRCTRL_CONTROL_SIMOBUCK_INIT:
-
+            // #### INTERNAL BEGIN ####
+            // HSP20-431 Change #1 Begin.
+            // #### INTERNAL END ####
             //
             // Apply specific trim optimization for SIMOBUCK.
             //
@@ -2290,20 +3188,28 @@ am_hal_pwrctrl_control(am_hal_pwrctrl_control_e eControl, void *pArgs)
             MCUCTRL->SIMOBUCK13_b.SIMOBUCKLPTRIMVDDS = MCUCTRL->SIMOBUCK12_b.LPTRIMVDDF;
 
 #if AM_HAL_PWRCTL_SHORT_VDDF_TO_VDDS
+            // #### INTERNAL BEGIN ####
+            // HSP20-501 Power supply change
+            // Set SIMOBUCKACTTRIMVDDS to 0 to improve ripple on VDDF rail caused by
+            // VDDS buck switching. The MEMLDO is responsible to catch potential VDDF dip
+            // in this solution.
+            // #### INTERNAL END ####
             //
             // Enable VDDF to VDDS short to increase load cap (2.2uF + 2.2uF).
             //
             MCUCTRL->PWRSW1_b.SHORTVDDFVDDSORVAL  = 1;
             MCUCTRL->PWRSW1_b.SHORTVDDFVDDSOREN   = 1;
-#endif
+
+            g_ui32origSimobuckVDDStrim = MCUCTRL->SIMOBUCK13_b.SIMOBUCKACTTRIMVDDS;
+            MCUCTRL->SIMOBUCK13_b.SIMOBUCKACTTRIMVDDS = 0;    // VDDS trim level to 0
+#endif // AM_HAL_PWRCTL_SHORT_VDDF_TO_VDDS
 
             //
             // Enable VDDC, VDDF, and VDDS.
             //
-            MCUCTRL->SIMOBUCK0 =
-                _VAL2FLD(MCUCTRL_SIMOBUCK0_VDDSRXCOMPEN, 1) |
-                _VAL2FLD(MCUCTRL_SIMOBUCK0_VDDFRXCOMPEN, 1) |
-                _VAL2FLD(MCUCTRL_SIMOBUCK0_VDDCRXCOMPEN, 1);
+            MCUCTRL->SIMOBUCK0  =   _VAL2FLD(MCUCTRL_SIMOBUCK0_VDDCRXCOMPEN, 1) |
+                                    _VAL2FLD(MCUCTRL_SIMOBUCK0_VDDSRXCOMPEN, 1) |
+                                    _VAL2FLD(MCUCTRL_SIMOBUCK0_VDDFRXCOMPEN, 1);
 
             //
             // Set SIMOBUCK clock.
@@ -2311,7 +3217,10 @@ am_hal_pwrctrl_control(am_hal_pwrctrl_control_e eControl, void *pArgs)
             MCUCTRL->SIMOBUCK1_b.SIMOBUCKTONCLKTRIM       = 0;
             MCUCTRL->SIMOBUCK1_b.SIMOBUCKRXCLKACTTRIM     = 1;
 
-
+            // #### INTERNAL BEGIN ####
+            // HSP20-431 Change #1 End.
+            // HSP20-431 Change #3 Begin.
+            // #### INTERNAL END ####
             //
             // Perform adjustments to voltage trims to ensure proper functionality.
             //
@@ -2321,8 +3230,20 @@ am_hal_pwrctrl_control(am_hal_pwrctrl_control_e eControl, void *pArgs)
                 return ui32ReturnStatus;
             }
 
-
-
+            // #### INTERNAL BEGIN ####
+            // HSP20-431 Change #3 End.
+            // HSP20-431 Change #2 Begin.
+            //
+            // HSP20-415: the following settings are forcing ANALDO+ACRG always
+            // active to avoid analog reference being affected by noise which could
+            // cause false BODL BOR.
+            // ACRG register requires AIKEY to access, an info1 patch to unlock
+            // this register to be applied before using this piece of code is necessary.
+            // Check HSP20-415 for details.
+            //
+            // HSP20-415: to resolve unexpected VDDF drop during observed during
+            // HSP20-415 issue debugging, SIMOBUCK is forced to be always active.
+            // #### INTERNAL END ####
 #if AM_HAL_PWRCTL_KEEP_ANA_ACTIVE_IN_DS
             if ( APOLLO4_GE_B1 )
             {
@@ -2353,23 +3274,52 @@ am_hal_pwrctrl_control(am_hal_pwrctrl_control_e eControl, void *pArgs)
                     //
                     // Keep SIMOBUCK in active mode
                     //
-                    MCUCTRL->VRCTRL_b.SIMOBUCKPDNB      = 1;
-                    MCUCTRL->VRCTRL_b.SIMOBUCKRSTB      = 1;
-                    MCUCTRL->VRCTRL_b.SIMOBUCKACTIVE    = 1;
-                    MCUCTRL->VRCTRL_b.SIMOBUCKOVER      = 1;
+                    simobuck_force_active();
                 }
                 else
                 {
                     ui32ReturnStatus = AM_HAL_STATUS_INVALID_OPERATION;
                 }
             }
-#endif
-
+#endif // AM_HAL_PWRCTL_KEEP_ANA_ACTIVE_IN_DS
+            // #### INTERNAL BEGIN ####
+            // HSP20-431 Change #2 End.
+            // #### INTERNAL END ####
 
             //
             // Enable the SIMOBUCK
             //
             PWRCTRL->VRCTRL_b.SIMOBUCKEN = 1;
+
+#if AM_HAL_PWRCTL_SET_CORELDO_MEMLDO_IN_PARALLEL
+            // #### INTERNAL BEGIN ####
+            // HSP20-501 Power supply change begin.
+            // #### INTERNAL END ####
+            am_hal_delay_us(5000);
+            if ( buck_interval_check(&ui32BuckVddcIntervalUs, BUCK_CH_VDDC) != AM_HAL_STATUS_SUCCESS)
+            {
+                // Simobuck VDDC interval check failed, skip this operation
+                break;
+            }
+
+            if ( buck_interval_check(&ui32BuckVddfIntervalUs, BUCK_CH_VDDF) != AM_HAL_STATUS_SUCCESS )
+            {
+                // Simobuck VDDF interval check failed, skip this operation
+                break;
+            }
+
+            coreldo_enable();
+            memldo_enable();
+
+            am_hal_delay_us(2500);
+
+            coreldo_vddc_parallel_set(ui32BuckVddcIntervalUs);
+            memldo_vddf_parallel_set(ui32BuckVddfIntervalUs);
+
+            // #### INTERNAL BEGIN ####
+            // HSP20-501 Power supply change end.
+            // #### INTERNAL END ####
+#endif // AM_HAL_PWRCTL_SET_CORELDO_MEMLDO_IN_PARALLEL
             break;
 
 #ifdef AM_HAL_PWRCTL_CRYPTO_WA
@@ -2409,6 +3359,11 @@ am_hal_pwrctrl_control(am_hal_pwrctrl_control_e eControl, void *pArgs)
             //
             MCUCTRL->XTALGENCTRL_b.XTALBIASTRIM   = 0x20;
 
+// #### INTERNAL BEGIN ####
+            // TODO FIXME: Is this intended to be a write to the field or the
+            //      entire register? The workaround code from validation simply
+            //      wrote the value 1 to the register.
+// #### INTERNAL END ####
             MCUCTRL->XTALCTRL =
                 _VAL2FLD(MCUCTRL_XTALCTRL_XTALICOMPTRIM,  0 )                                       |
                 _VAL2FLD(MCUCTRL_XTALCTRL_XTALIBUFTRIM,   0 )                                       |
@@ -2421,6 +3376,12 @@ am_hal_pwrctrl_control(am_hal_pwrctrl_control_e eControl, void *pArgs)
 
         case AM_HAL_PWRCTRL_CONTROL_DIS_PERIPHS_ALL:
             PWRCTRL->DEVPWREN =
+// #### INTERNAL BEGIN ####
+#if 0   // A2SD-2003 deprecate I3C enable/status registers/fields
+                _VAL2FLD(PWRCTRL_DEVPWREN_PWRENI3C1,    PWRCTRL_DEVPWREN_PWRENI3C1_DIS)         |
+                _VAL2FLD(PWRCTRL_DEVPWREN_PWRENI3C0,    PWRCTRL_DEVPWREN_PWRENI3C0_DIS)         |
+#endif
+// #### INTERNAL END ####
                 _VAL2FLD(PWRCTRL_DEVPWREN_PWRENDBG,     PWRCTRL_DEVPWREN_PWRENDBG_DIS)          |
                 _VAL2FLD(PWRCTRL_DEVPWREN_PWRENUSBPHY,  PWRCTRL_DEVPWREN_PWRENUSBPHY_DIS)       |
                 _VAL2FLD(PWRCTRL_DEVPWREN_PWRENUSB,     PWRCTRL_DEVPWREN_PWRENUSB_DIS)          |
@@ -2446,8 +3407,79 @@ am_hal_pwrctrl_control(am_hal_pwrctrl_control_e eControl, void *pArgs)
                 _VAL2FLD(PWRCTRL_DEVPWREN_PWRENIOM1,    PWRCTRL_DEVPWREN_PWRENIOM1_DIS)         |
                 _VAL2FLD(PWRCTRL_DEVPWREN_PWRENIOM0,    PWRCTRL_DEVPWREN_PWRENIOM0_DIS)         |
                 _VAL2FLD(PWRCTRL_DEVPWREN_PWRENIOS,     PWRCTRL_DEVPWREN_PWRENIOS_DIS);
+// #### INTERNAL BEGIN ####
+#if 0 // Probably not needed, no Coremark difference.
+            //
+            // Update only certain fields of this register.
+            //
+            MCUCTRL->AUDADCPWRCTRL &=
+                ~(MCUCTRL_AUDADCPWRCTRL_AUDADCPWRCTRLSWE_Msk    |
+                  MCUCTRL_AUDADCPWRCTRL_VDDAUDADCRESETN_Msk     |
+                  MCUCTRL_AUDADCPWRCTRL_VDDAUDADCDIGISOLATE_Msk |
+                  MCUCTRL_AUDADCPWRCTRL_VDDAUDADCSARISOLATE_Msk |
+                  MCUCTRL_AUDADCPWRCTRL_AUDADCBPSEN_Msk         |
+                  MCUCTRL_AUDADCPWRCTRL_AUDADCAPSEN_Msk);
+            MCUCTRL->AUDADCPWRCTRL |=
+                _VAL2FLD(MCUCTRL_AUDADCPWRCTRL_AUDADCPWRCTRLSWE,    MCUCTRL_AUDADCPWRCTRL_AUDADCPWRCTRLSWE_OVERRIDE_DIS)    |
+                _VAL2FLD(MCUCTRL_AUDADCPWRCTRL_VDDAUDADCRESETN,     MCUCTRL_AUDADCPWRCTRL_VDDAUDADCRESETN_ASSERT)           |
+                _VAL2FLD(MCUCTRL_AUDADCPWRCTRL_VDDAUDADCDIGISOLATE, MCUCTRL_AUDADCPWRCTRL_VDDAUDADCDIGISOLATE_DIS)          |
+                _VAL2FLD(MCUCTRL_AUDADCPWRCTRL_VDDAUDADCSARISOLATE, MCUCTRL_AUDADCPWRCTRL_VDDAUDADCSARISOLATE_DIS)          |
+                _VAL2FLD(MCUCTRL_AUDADCPWRCTRL_AUDADCBPSEN,         MCUCTRL_AUDADCPWRCTRL_AUDADCBPSEN_DIS)                  |
+                _VAL2FLD(MCUCTRL_AUDADCPWRCTRL_AUDADCAPSEN,         MCUCTRL_AUDADCPWRCTRL_AUDADCAPSEN_DIS);
+
+            //
+            // Update only certain fields of this register.
+            //
+            MCUCTRL->ADCPWRCTRL &=
+                ~(MCUCTRL_ADCPWRCTRL_VDDADCRESETN_Msk       |
+                  MCUCTRL_ADCPWRCTRL_VDDADCDIGISOLATE_Msk   |
+                  MCUCTRL_ADCPWRCTRL_VDDADCSARISOLATE_Msk   |
+                  MCUCTRL_ADCPWRCTRL_ADCBPSEN_Msk);
+            MCUCTRL->ADCPWRCTRL |=
+                _VAL2FLD(MCUCTRL_ADCPWRCTRL_VDDADCRESETN, MCUCTRL_ADCPWRCTRL_VDDADCRESETN_ASSERT)       |
+                _VAL2FLD(MCUCTRL_ADCPWRCTRL_VDDADCDIGISOLATE, MCUCTRL_ADCPWRCTRL_VDDADCDIGISOLATE_DIS)  |
+                _VAL2FLD(MCUCTRL_ADCPWRCTRL_VDDADCSARISOLATE, MCUCTRL_ADCPWRCTRL_VDDADCSARISOLATE_DIS)  |
+                _VAL2FLD(MCUCTRL_ADCPWRCTRL_ADCBPSEN, MCUCTRL_ADCPWRCTRL_ADCBPSEN_DIS);
+#endif
+#if 0 // Probably not needed, should be handled in the appl.
+    //
+    // Configure the Shared RAM domain active state settings.
+    //
+    PWRCTRL->SSRAMRETCFG_b.SSRAMACTDISP = AM_HAL_PWRCTRL_SRAM_NONE;
+    PWRCTRL->SSRAMRETCFG_b.SSRAMACTGFX  = AM_HAL_PWRCTRL_SRAM_NONE;
+    PWRCTRL->SSRAMRETCFG_b.SSRAMACTDSP  = AM_HAL_PWRCTRL_SRAM_NONE;
+    PWRCTRL->SSRAMRETCFG_b.SSRAMACTMCU  = AM_HAL_PWRCTRL_SRAM_NONE;
+    PWRCTRL->SSRAMRETCFG_b.SSRAMPWDSLP  = AM_HAL_PWRCTRL_SRAM_1M;
+#endif
+// #### INTERNAL END ####
             break;
 
+// #### INTERNAL BEGIN ####
+#if 0
+        case IF_USED_THIS_WOULD_BE_A_NEW_CASE:
+            PWRCTRL->MEMPWREN =
+                _VAL2FLD(PWRCTRL_MEMPWREN_PWRENCACHEB2, PWRCTRL_AUDSSPWRSTATUS_PWRSTAUDADC_ON)  |
+                _VAL2FLD(PWRCTRL_MEMPWREN_PWRENCACHEB0, PWRCTRL_MEMPWREN_PWRENCACHEB0_EN)       |
+                _VAL2FLD(PWRCTRL_MEMPWREN_PWRENNVM0, PWRCTRL_MEMPWREN_PWRENNVM0_EN)             |
+                _VAL2FLD(PWRCTRL_MEMPWREN_PWRENDTCM, PWRCTRL_MEMPWREN_PWRENDTCM_TCM384K);
+
+            PWRCTRL->SSRAMPWREN =
+                _VAL2FLD(PWRCTRL_SSRAMPWREN_PWRENSSRAM, PWRCTRL_SSRAMPWREN_PWRENSSRAM_ALL);
+
+            PWRCTRL->AUDSSPWREN =
+                _VAL2FLD(PWRCTRL_AUDSSPWREN_PWRENDSPA,   PWRCTRL_AUDSSPWREN_PWRENDSPA_DIS)      |
+                _VAL2FLD(PWRCTRL_AUDSSPWREN_PWRENAUDADC, PWRCTRL_AUDSSPWREN_PWRENAUDADC_DIS)    |
+                _VAL2FLD(PWRCTRL_AUDSSPWREN_PWRENI2S1,   PWRCTRL_AUDSSPWREN_PWRENI2S1_DIS)      |
+                _VAL2FLD(PWRCTRL_AUDSSPWREN_PWRENI2S0,   PWRCTRL_AUDSSPWREN_PWRENI2S0_DIS)      |
+                _VAL2FLD(PWRCTRL_AUDSSPWREN_PWRENPDM3,   PWRCTRL_AUDSSPWREN_PWRENPDM3_DIS)      |
+                _VAL2FLD(PWRCTRL_AUDSSPWREN_PWRENPDM2,   PWRCTRL_AUDSSPWREN_PWRENPDM2_DIS)      |
+                _VAL2FLD(PWRCTRL_AUDSSPWREN_PWRENPDM1,   PWRCTRL_AUDSSPWREN_PWRENPDM1_DIS)      |
+                _VAL2FLD(PWRCTRL_AUDSSPWREN_PWRENPDM0,   PWRCTRL_AUDSSPWREN_PWRENPDM0_DIS)      |
+                _VAL2FLD(PWRCTRL_AUDSSPWREN_PWRENAUDPB,  PWRCTRL_AUDSSPWREN_PWRENAUDPB_DIS)     |
+                _VAL2FLD(PWRCTRL_AUDSSPWREN_PWRENAUDREC, PWRCTRL_AUDSSPWREN_PWRENAUDREC_DIS);
+            break;
+#endif
+// #### INTERNAL END ####
         default:
             ui32ReturnStatus = AM_HAL_STATUS_INVALID_ARG;
             break;
@@ -2466,6 +3498,177 @@ am_hal_pwrctrl_control(am_hal_pwrctrl_control_e eControl, void *pArgs)
 //! @}
 //
 //*****************************************************************************
+// #### INTERNAL BEGIN ####
+#if 0
+const static
+uint32_t g_ui32WorkaroundOpcodes[] =
+{
+    //
+    // Software workaround for an issue with nRST on a full POR.
+    // #### I N T E R N A L   B E G I N  ####  (AFTER ACTIVATION, THIS LINE MUST BE CONVERTED BACK TO A NORMAL INTERNAL STATEMENT)
+    // See JIRA: A2SD-1715
+    // #### I N T E R N A L   E N D  ####      (AFTER ACTIVATION, THIS LINE MUST BE CONVERTED BACK TO A NORMAL INTERNAL STATEMENT)
+    //
+    // MCUCTRL->PWRSW1_b.SHORTVDDCVDDCLVORVAL = 0;
+    0x0000F240,     // F2400000 movw    r0, 0x0000
+    0x0002F2C4,     // F2C40002 movt    r0, 0x4002
+    0x1380F8D0,     // F8D01380 ldr     r1, [r0, #0x380]
+    0x5100F021,     // F0215100 bic     r1, r1, #0x20000000
+    0x1380F8C0,     // F8C01380 str     r1, [r0, #0x380]
 
+    // MCUCTRL->PWRSW1_b.SHORTVDDCVDDCLVOREN = 1;
+    0x1380F8D0,     // F8D01380 ldr     r1, [r0, #0x380]
+    0x5180F041,     // F0415180 orr     r1, r1, #0x10000000
+    0x1380F8C0,     // F8C01380 str     r1, [r0, #0x380]
 
+    //
+    // MRAM auto wakeup sequence
+    //
+    //MRAM->ACCESS = 0x000000C3;
+    0x0000F244,     // F2440000 movw    r0, #0x4000
+    0x0001F2C4,     // F2C40001 movt    r0, #0x4001
+    0x608121C3,     // 21C3     movs    r1, #0xC3
+                    // 6081     str     r1, [r0, #8]
 
+    //  MRAM->TMCCTRL_b.TMCOVERRIDE = 1;
+    0x6D01BF00,     // 6D01     ldr     r1, [r0, #0x50]
+                    // BF00     nop
+    0x0110F041,     // F0410110 orr     r1, r1, #0x10
+    0xBF006501,     // 6501     str     r1, [r0, #0x50]
+                    // BF00     nop
+
+    // MRAM->TMCCMD_b.TMCCMD = MRAM_TMCCMD_TMCCMD_AUTOWAKEUP;
+    0xBF006D41,     // 6D41     ldr      r1, [r0, #0x54]
+                    // BF00     nop
+    0x011FF021,     // F021011F bic     r1, r1, #0x1F
+    0x6541310D,     // 310D     adds    r1, r1, #0xD
+                    // 6541     str     r1, [r0, #0x54]
+
+    // MRAM->CTRL_b.GENCMD = MRAM_CTRL_GENCMD_GO;
+    0xBF006841,     // 6841     ldr     r1, [r0, #4]
+                    // BF00     nop
+    0x0108F041,     // F0410108 orr     r1, r1, #8
+    0xBF006041,     // 6041     str     r1, [r0, #4]
+                    // BF00     nop
+
+    // MRAM->ACCESS = 0x00000000;
+    0x60812100,     // 2100     movs    r1, #0
+                    // 6081     str     r1, [r0, #8]
+    0xBF004770      // 4770     bx lr
+                    // BF00     nop
+};
+#endif
+// #### INTERNAL END ####
+// #### INTERNAL BEGIN ####
+// TODO Fixme
+// Workarounds for A2SD-1715 and also the MRAM wakeup issue needs to be
+// added. We had workarounds in place for these issues, but they were
+// bricking parts, so we needed to take them out.
+// #### INTERNAL END ####
+// #### INTERNAL BEGIN ####
+#if 0
+    uint32_t ux, SRAMCode;
+    void (*pFunc)(void);
+    uint32_t ui32Opcodes[(sizeof(g_ui32WorkaroundOpcodes) / 4) + 2];
+
+    //
+    // Some actions need to be performed specifically on cold boot-up.
+    //
+    if (RSTGEN->STAT_b.PORSTAT)
+    {
+        am_hal_mcuctrl_device_t sChipInfo;
+
+        //
+        // Get device info
+        //
+        am_hal_mcuctrl_info_get(AM_HAL_MCUCTRL_INFO_DEVICEID, &sChipInfo);
+
+        //
+        // Also check the chip revision.
+        //
+        switch (sChipInfo.ui32ChipRev & 0xFF)
+        {
+            //
+            // This sequence is only needed for rev A0 parts (0x11 in CHIPREV)
+            //
+            case 0x11:
+                //
+                // #### I N T E R N A L   B E G I N ####  (AFTER ACTIVATION, THIS LINE MUST BE CONVERTED BACK TO A NORMAL INTERNAL STATEMENT)
+                // See JIRA: A2SD-1715
+                // #### I N T E R N A L   E N D ####  (AFTER ACTIVATION, THIS LINE MUST BE CONVERTED BACK TO A NORMAL INTERNAL STATEMENT)
+                // Software workaround for an issue with nRST on a full POR.
+                // We'll execute both of these workarounds from SRAM.
+                //
+                for (ux = 0; ux < sizeof(g_ui32WorkaroundOpcodes) / 4; ux++)
+                {
+                    ui32Opcodes[ux] = g_ui32WorkaroundOpcodes[ux];
+                }
+
+                //
+                // Call the SRAM routine.
+                //
+                SRAMCode = (uint32_t)ui32Opcodes | 0x1;
+                pFunc = (void (*)(void))SRAMCode;
+                (*pFunc)();
+/*******************
+                //
+                // This is the original C code that cannot be run in MRAM.
+                // It is presented here only for comparison with the assembly
+                //  code, it should be removed after reviews are completed.
+
+                //
+                // Software workaround for an issue with nRST on a full POR.
+                // #### I N T E R N A L   B E G I N ####  (AFTER ACTIVATION, THIS LINE MUST BE CONVERTED BACK TO A NORMAL INTERNAL STATEMENT)
+                // See JIRA: A2SD-1715
+                // #### I N T E R N A L   E N D  ####  (AFTER ACTIVATION, THIS LINE MUST BE CONVERTED BACK TO A NORMAL INTERNAL STATEMENT)
+                //
+                MCUCTRL->PWRSW1_b.SHORTVDDCVDDCLVORVAL = 0;
+                MCUCTRL->PWRSW1_b.SHORTVDDCVDDCLVOREN = 1;
+
+                //
+                // MRAM auto wakeup sequence
+                //
+                // It's likely that this is bricking parts and needs to be done in SRAM!!
+                MRAM->ACCESS = 0x000000C3;
+                MRAM->TMCCTRL_b.TMCOVERRIDE = 1;
+                MRAM->TMCCMD_b.TMCCMD = MRAM_TMCCMD_TMCCMD_AUTOWAKEUP;
+                MRAM->CTRL_b.GENCMD = MRAM_CTRL_GENCMD_GO;
+                MRAM->ACCESS = 0x00000000;
+*******************/
+                break;
+
+            default:
+                break;
+        }
+    }
+#endif
+
+#if 0  // Disabled until Validation is complete.
+    if ((APOLLO4_A0) || (APOLLO4_A1))
+    {
+        //
+        // SW Workaround for FAL-451 issue with SIMOBUCK.
+        //
+
+        //
+        // Enabled comparitors for CLV and F only!  Leave S and C disabled.
+        //
+        MCUCTRL->SIMOBUCK15 = _VAL2FLD(MCUCTRL_SIMOBUCK15_VDDFRXCOMPTRIMEN, 1)  |
+                              _VAL2FLD(MCUCTRL_SIMOBUCK15_VDDCLVRXCOMPTRIMEN, 1);
+
+        //
+        // Short power switches.
+        //
+        MCUCTRL->PWRSW1      = _VAL2FLD(MCUCTRL_PWRSW1_SHORTVDDFVDDSORVAL, 1)   |
+                               _VAL2FLD(MCUCTRL_PWRSW1_SHORTVDDCVDDCLVORVAL, 1);
+        MCUCTRL->PWRSW1      = _VAL2FLD(MCUCTRL_PWRSW1_SHORTVDDFVDDSORVAL, 1)   |
+                               _VAL2FLD(MCUCTRL_PWRSW1_SHORTVDDFVDDSOREN, 1)    |
+                               _VAL2FLD(MCUCTRL_PWRSW1_SHORTVDDCVDDCLVORVAL, 1) |
+                               _VAL2FLD(MCUCTRL_PWRSW1_SHORTVDDCVDDCLVOREN, 1);
+        //
+        // Enable the SIMOBUCK.
+        //
+        PWRCTRL->VRCTRL = 1;
+    }
+#endif
+// #### INTERNAL END ####
