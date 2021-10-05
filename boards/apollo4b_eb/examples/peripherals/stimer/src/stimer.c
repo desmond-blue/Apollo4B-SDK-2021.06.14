@@ -59,7 +59,7 @@
 // Macro definitions
 //
 //*****************************************************************************
-#define WAKE_INTERVAL_IN_MS     40000
+#define WAKE_INTERVAL_IN_MS     1000
 #define XT_PERIOD               32768
 #define WAKE_INTERVAL           XT_PERIOD * WAKE_INTERVAL_IN_MS * 1e-3
 
@@ -135,6 +135,37 @@ main(void)
     // Configure the board for low power operation.
     //
     am_bsp_low_power_init();
+
+#if defined (AM_PART_APOLLO4B)
+    //
+    // Power down Crypto.
+    //
+    am_hal_pwrctrl_control(AM_HAL_PWRCTRL_CONTROL_CRYPTO_POWERDOWN, 0);
+
+    //
+    // Disable all peripherals
+    //
+    am_hal_pwrctrl_control(AM_HAL_PWRCTRL_CONTROL_DIS_PERIPHS_ALL, 0);
+
+    //
+    // Enable XTAL
+    //
+    am_hal_clkgen_control(AM_HAL_CLKGEN_CONTROL_XTAL_START, 0);
+
+#endif
+
+//#ifdef APOLLO4_SIP
+#define AM_DEVICES_COOPER_RESET_PIN           42
+
+    //
+    // For SiP packages, put the BLE Controller in reset.
+    //
+    am_hal_gpio_state_write(AM_DEVICES_COOPER_RESET_PIN, AM_HAL_GPIO_OUTPUT_CLEAR);
+    am_hal_gpio_pinconfig(AM_DEVICES_COOPER_RESET_PIN, am_hal_gpio_pincfg_output);
+    am_hal_gpio_state_write(AM_DEVICES_COOPER_RESET_PIN, AM_HAL_GPIO_OUTPUT_SET);
+    am_hal_gpio_state_write(AM_DEVICES_COOPER_RESET_PIN, AM_HAL_GPIO_OUTPUT_CLEAR);
+//#endif // APOLLO4_SIP
+	
 
     //
     // STIMER init.
