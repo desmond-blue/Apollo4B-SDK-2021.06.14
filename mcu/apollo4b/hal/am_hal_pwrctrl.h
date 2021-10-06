@@ -13,9 +13,39 @@
 
 //*****************************************************************************
 //
-// ${copyright}
+// Copyright (c) 2021, Ambiq Micro, Inc.
+// All rights reserved.
 //
-// This is part of revision ${version} of the AmbiqSuite Development Package.
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
+//
+// 1. Redistributions of source code must retain the above copyright notice,
+// this list of conditions and the following disclaimer.
+//
+// 2. Redistributions in binary form must reproduce the above copyright
+// notice, this list of conditions and the following disclaimer in the
+// documentation and/or other materials provided with the distribution.
+//
+// 3. Neither the name of the copyright holder nor the names of its
+// contributors may be used to endorse or promote products derived from this
+// software without specific prior written permission.
+//
+// Third party software included in this distribution is subject to the
+// additional license terms as defined in the /docs/licenses directory.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+// ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+// LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+// CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+// SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+// INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+// CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+// ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+// POSSIBILITY OF SUCH DAMAGE.
+//
+// This is part of revision b0-release-20210111-1514-g6a1d4008b7 of the AmbiqSuite Development Package.
 //
 //*****************************************************************************
 
@@ -32,97 +62,49 @@ extern "C"
 // Option to boost VDDF in Low Power as well as High Performance modes.
 //
 // AM_HAL_PWRCTL_BOOST_VDDF_FOR_BOTH_LP_HP:
-//      0 = Boost VDDF only when switching to HP mode.
+//      0 = Boost VDDF only when switching to HP mode (default setting).
 //      1 = Boost VDDF in both LP and HP modes.
-//  Default: 0
 //
-// #### INTERNAL BEGIN ####
-// TODO
-// JVS: We need to provide recommendation when it should be enabled
-// #### INTERNAL END ####
 //*****************************************************************************
-#define AM_HAL_PWRCTL_BOOST_VDDF_FOR_BOTH_LP_HP         0
+#define AM_HAL_PWRCTL_BOOST_VDDF_FOR_BOTH_LP_HP     0
 
 //
 // Delays (in uS) required for VDDF/VDDC trim enhancements.
 //
 #define AM_HAL_PWRCTRL_VDDF_BOOST_DELAY     20
 #define AM_HAL_PWRCTRL_VDDC_BOOST_DELAY     20
-#define AM_HAL_PWRCTRL_GOTOLDO_DELAY        20
+
 
 //*****************************************************************************
 //
 // Option for keeping portion of Analog in active mode during Deepsleep.
 //  AM_HAL_PWRCTL_KEEP_ANA_ACTIVE_IN_DS:
-//      0 = Leave inactive.
+//      0 = Leave inactive (default).
 //      1 = Set trims to keep active.  Uses extra power in Deepsleep.
-//  Default: 0
 //
-// #### INTERNAL BEGIN ####
-//  TODO - We need to provide exact recommendation, when this should be set.
-//         @Ivan Bogue to provide the info, and will add it once I have some clarity (Jayesh).
-// #### INTERNAL END ####
 //*****************************************************************************
-#define AM_HAL_PWRCTL_KEEP_ANA_ACTIVE_IN_DS             0
+#define AM_HAL_PWRCTL_KEEP_ANA_ACTIVE_IN_DS     0
+
 
 //*****************************************************************************
 //
-// Option for Boosting VDDC, buck only.
-//  AM_HAL_PWRCTL_BOOST_VDDC
-//      0 = No Boost.
-//      1 = Boost VDDC for PCM trimmed parts (this is rolled back in deepsleep for buck)
-//  Default: 0
-//
-//*****************************************************************************
-#define AM_HAL_PWRCTL_BOOST_VDDC                        0
-
-//*****************************************************************************
-//
-// Option for Boosting VDDC, LDO only.
-//  AM_HAL_PWRCTL_BOOST_VDDC_LDO
-//      0 = No Boost.
-//      1 = Boost VDDC for PCM trimmed parts (this is rolled back in deepsleep)
-//  Default: 0
-//
-// Note, this option is no longer needed after new production test screen.
-//
-//*****************************************************************************
-#define AM_HAL_PWRCTL_BOOST_VDDC_LDO                    0
-
-//*****************************************************************************
-//
-// Option for coreldo and memldo to operate in parallel with simobuck
-//  AM_HAL_PWRCTL_SET_CORELDO_MEMLDO_IN_PARALLEL
-//      0 = Do not turn on LDOs in parallel with simobuck.
-//      1 = Turn on LDOs in parallel with simobuck and set their voltage levels
-//          ~35mV lower than minimum buck voltages.
-//  Default: 1
-//
-//*****************************************************************************
-#define AM_HAL_PWRCTL_SET_CORELDO_MEMLDO_IN_PARALLEL    1
-
-//*****************************************************************************
-//
-// Option for shorting VDDF to VDDS
+// Option for keeping shorting VDDF to VDDS
 //  AM_HAL_PWRCTL_SHORT_VDDF_TO_VDDS
-//      0 = Leave inactive.
-//      1 = Set trims to short.
-//  Default: 1
-// #### INTERNAL BEGIN ####
-// There was originally a comment (prior to 8/20/21):
+//      0 = Leave inactive (default).
 //      1 = Set trims to short.  Uses extra power in Deepsleep.
-// Jamie says the comment is only true if the short is not removed before DS.
-// #### INTERNAL END ####
 //
 //*****************************************************************************
-#define AM_HAL_PWRCTL_SHORT_VDDF_TO_VDDS                1
+#define AM_HAL_PWRCTL_SHORT_VDDF_TO_VDDS        0
 
+//*****************************************************************************
 //
-// Check for invalid option combinations
+// Option for Boosting VDDC (Both LDO and Buck)
+//  AM_HAL_PWRCTL_BOOST_VDDC
+//      0 = No Boost (default).
+//      1 = Boost VDDC for PCM trimmed parts (this is rolled back in deepsleep for buck)
 //
-#if ( (AM_HAL_PWRCTL_SET_CORELDO_MEMLDO_IN_PARALLEL != 0) && (AM_HAL_PWRCTL_SHORT_VDDF_TO_VDDS == 0) )
-#error AM_HAL_PWRCTL_SET_CORELDO_MEMLDO_IN_PARALLEL must include AM_HAL_PWRCTL_SHORT_VDDF_TO_VDDS.
-#endif
+//*****************************************************************************
+#define AM_HAL_PWRCTL_BOOST_VDDC                 0
 
 //*****************************************************************************
 //
@@ -635,6 +617,7 @@ extern uint32_t am_hal_pwrctrl_low_power_init(void);
 //
 //*****************************************************************************
 extern uint32_t am_hal_pwrctrl_control(am_hal_pwrctrl_control_e eControl, void *pArgs);
+
 
 #ifdef __cplusplus
 }
