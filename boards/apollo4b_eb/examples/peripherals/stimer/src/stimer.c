@@ -136,6 +136,37 @@ main(void)
     //
     am_bsp_low_power_init();
 
+#if defined (AM_PART_APOLLO4B)
+    //
+    // Power down Crypto.
+    //
+    am_hal_pwrctrl_control(AM_HAL_PWRCTRL_CONTROL_CRYPTO_POWERDOWN, 0);
+
+    //
+    // Disable all peripherals
+    //
+    am_hal_pwrctrl_control(AM_HAL_PWRCTRL_CONTROL_DIS_PERIPHS_ALL, 0);
+
+    //
+    // Enable XTAL
+    //
+    am_hal_clkgen_control(AM_HAL_CLKGEN_CONTROL_XTAL_START, 0);
+
+#endif
+
+//#ifdef APOLLO4_SIP
+#define AM_DEVICES_COOPER_RESET_PIN           42
+
+    //
+    // For SiP packages, put the BLE Controller in reset.
+    //
+    am_hal_gpio_state_write(AM_DEVICES_COOPER_RESET_PIN, AM_HAL_GPIO_OUTPUT_CLEAR);
+    am_hal_gpio_pinconfig(AM_DEVICES_COOPER_RESET_PIN, am_hal_gpio_pincfg_output);
+    am_hal_gpio_state_write(AM_DEVICES_COOPER_RESET_PIN, AM_HAL_GPIO_OUTPUT_SET);
+    am_hal_gpio_state_write(AM_DEVICES_COOPER_RESET_PIN, AM_HAL_GPIO_OUTPUT_CLEAR);
+//#endif // APOLLO4_SIP
+	
+
     //
     // STIMER init.
     //
@@ -146,8 +177,12 @@ main(void)
     //
     am_hal_interrupt_master_enable();
 
-	am_hal_gpio_state_write(88, AM_HAL_GPIO_OUTPUT_SET);
-	am_hal_gpio_pinconfig(88, am_hal_gpio_pincfg_output);
+		am_hal_gpio_state_write(88, AM_HAL_GPIO_OUTPUT_SET);
+		am_hal_gpio_pinconfig(88, am_hal_gpio_pincfg_output);
+
+		/* Disable LP mode */
+		AM_REGVAL(0x40020060) |= 0x000E0000; // MCUCTRL->VRCTRL Set bits 17:19 to 1 (SIMOBUCKACTIVE, SIMOBUCKRSTB,SIMOBUCKPDNB)
+		AM_REGVAL(0x40020060) |= 0x00010000; // MCUCTRL->VRCTRL Set bit 16 to 1 (SIMOBUCKOVER)
 
     //
     // Sleep forever while waiting for an interrupt.
