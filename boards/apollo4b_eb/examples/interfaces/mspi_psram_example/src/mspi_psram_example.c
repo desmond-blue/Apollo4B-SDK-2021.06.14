@@ -51,6 +51,8 @@
 #include "am_bsp.h"
 #include "am_devices_mspi_psram_aps6404l.h"
 #include "am_util.h"
+
+#define XIP_TEST_OFFSET		0x0002e9be
 #define ENABLE_XIPMM
 #define MSPI_INT_TIMEOUT        (100)
 
@@ -216,41 +218,31 @@ static void xip_test_function(void)
 }
 
 #elif defined(__ARMCC_VERSION)
-__asm static void xip_test_function(void)
+__asm static uint32_t xip_test_function(void)
 {
-    nop                         // Just execute NOPs and return.
-    nop
-    nop
-    nop
-    nop
-    nop
-    nop
-    nop
-    nop
-    nop
-    nop
-    nop
-    nop
-    nop
-    nop
-    nop
-    nop
-    nop
-    nop
-    nop
-    nop
-    nop
-    nop
-    nop
-    nop
-    nop
-    nop
-    nop
-    nop
-    nop
-    nop
-    nop
-    bx      lr
+	ldr	r3, [pc, #40] 
+	mov r0, r3
+	nop 		//0xBF00
+	nop 		//0xBF00
+	nop 		//0xBF00
+	nop 		//0xBF00
+	nop 		//0xBF00
+	nop 		//0xBF00
+	nop 		//0xBF00
+	nop 		//0xBF00
+	nop 		//0xBF00
+	nop 		//0xBF00
+	nop 		//0xBF00
+	nop 		//0xBF00
+	nop 		//0xBF00
+	nop 		//0xBF00
+	nop 		//0xBF00
+	nop 		//0xBF00
+	nop 		//0xBF00
+	nop 		//0xBF00
+	nop 		//0xBF00
+	nop 		//0xBF00
+	bx	lr 	//4770
 }
 
 #elif defined(__IAR_SYSTEMS_ICC__)
@@ -293,7 +285,7 @@ __stackless static void xip_test_function(void)
 #endif
 
 #define MSPI_XIP_FUNCTION_SIZE  72
-typedef void (*mspi_xip_test_function_t)(void);
+typedef uint32_t (*mspi_xip_test_function_t)(void);
 
 #ifdef ENABLE_XIPMM
 //*****************************************************************************
@@ -381,7 +373,9 @@ main(void)
     //
     // Cast a pointer to the begining of the sector as the test function to call.
     //
-    mspi_xip_test_function_t test_function = (mspi_xip_test_function_t)((MSPI_XIP_BASE_ADDRESS) | 0x00000001);
+    //Bit[0] of any address you write to the PC with a BX, BLX, LDM, LDR, or POP instruction must be 1 for correct execution,
+    //because this bit indicates the required instruction set, and the Cortex-M4 processor only supports Thumb instr
+    mspi_xip_test_function_t test_function = (mspi_xip_test_function_t)((MSPI_XIP_BASE_ADDRESS) | XIP_TEST_OFFSET+1);
 
     //
     // Set the default cache configuration
@@ -585,7 +579,8 @@ main(void)
     // Write the executable function into the target sector.
     //
     am_util_stdio_printf("Writing Executable function of %d Bytes to Sector %d\n", MSPI_XIP_FUNCTION_SIZE, 0);
-    ui32Status = am_devices_mspi_psram_write(g_pDevHandle, (uint8_t *)funcAddr, 0, MSPI_XIP_FUNCTION_SIZE, true);
+    ui32Status = am_devices_mspi_psram_write(g_pDevHandle, (uint8_t *)funcAddr, XIP_TEST_OFFSET, MSPI_XIP_FUNCTION_SIZE, true);
+
     if (AM_DEVICES_MSPI_PSRAM_STATUS_SUCCESS != ui32Status)
     {
         am_util_stdio_printf("Failed to write executable function to Flash Device!\n");
@@ -614,12 +609,28 @@ main(void)
         }
     }
 
-    //
-    // Execute a call to the test function in the sector.
-    //
-    am_util_stdio_printf("Jumping to function in External Flash\n");
-    test_function();
-    am_util_stdio_printf("Returned from XIP call\n");
+	//
+	// Execute a call to the test function in the sector.
+	//
+	am_util_stdio_printf("Jumping to function in External Flash\n");
+
+	for(int i= 0; i < 1000; i++)
+	{
+		ui32Status = test_function();
+		if(ui32Status != 0x4770BF00)
+		{
+			am_util_stdio_printf("\n%dReturned %X from XIP call\n",i,ui32Status);
+		}
+		else
+		{
+			if(i%20==0)
+				am_util_stdio_printf("\n");
+			am_util_stdio_printf("%d ",i,ui32Status);
+		}
+			
+	}
+
+	am_util_stdio_printf("\nReturned %X from XIP call\n",ui32Status);
 
     //
     // Shutdown XIP operation.
