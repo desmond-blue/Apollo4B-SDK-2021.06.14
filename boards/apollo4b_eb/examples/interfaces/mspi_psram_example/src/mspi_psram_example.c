@@ -218,10 +218,20 @@ static void xip_test_function(void)
 }
 
 #elif defined(__ARMCC_VERSION)
+#define XIP_FUNC_SIZE 64
 __asm static uint32_t xip_test_function(void)
 {
-	ldr	r3, [pc, #40] 
+	nop 		//0xBF00
+	ldr	r3, [pc, #56] 
 	mov r0, r3
+	nop 		//0xBF00
+	nop 		//0xBF00
+	nop 		//0xBF00
+	nop 		//0xBF00
+	nop 		//0xBF00
+	nop 		//0xBF00
+	nop 		//0xBF00
+	nop 		//0xBF00
 	nop 		//0xBF00
 	nop 		//0xBF00
 	nop 		//0xBF00
@@ -358,6 +368,73 @@ run_mspi_xipmm(uint32_t block, bool bUseWordAccesses)
 
 am_devices_mspi_psram_sdr_timing_config_t MSPISdrTimingConfig;
 
+void test_xip(void)
+{
+	uint32_t ui32Status = 0;
+	uint32_t      funcAddr = ((uint32_t)&xip_test_function) & 0xFFFFFFFE;
+	//uint32_t ui32XIP_test_offset = XIP_TEST_OFFSET;
+	uint32_t ui32XIP_test_offset = 0;
+
+	//
+	// Set up for XIP operation.
+	//
+	am_util_stdio_printf("Putting the MSPI and External PSRAM into XIP mode\n");
+	ui32Status = am_devices_mspi_psram_enable_xip(g_pDevHandle);
+	if (AM_DEVICES_MSPI_PSRAM_STATUS_SUCCESS != ui32Status)
+	{
+		am_util_stdio_printf("Failed to put the MSPI into XIP mode!\n");
+	}
+
+	for(int j=0; j < (0x100000 - XIP_FUNC_SIZE); j+=4)
+	{
+		am_util_stdio_printf("0x%08X \n",j+MSPI_XIP_BASE_ADDRESS);
+		//
+		// Write the executable function into the target sector.
+		//
+		//am_util_stdio_printf("Writing Executable function of %d Bytes to offset %d\n", XIP_FUNC_SIZE, ui32XIP_test_offset+j);
+		ui32Status = am_devices_mspi_psram_write(g_pDevHandle, (uint8_t *)funcAddr, ui32XIP_test_offset+j, XIP_FUNC_SIZE, true);
+
+		if (AM_DEVICES_MSPI_PSRAM_STATUS_SUCCESS != ui32Status)
+		{
+			am_util_stdio_printf("Failed to write executable function to Flash Device!\n");
+			break;
+		}
+
+		//
+		// Cast a pointer to the begining of the sector as the test function to call.
+		//
+		//Bit[0] of any address you write to the PC with a BX, BLX, LDM, LDR, or POP instruction must be 1 for correct execution,
+		//because this bit indicates the required instruction set, and the Cortex-M4 processor only supports Thumb instr
+		mspi_xip_test_function_t test_function = (mspi_xip_test_function_t)((MSPI_XIP_BASE_ADDRESS) + (ui32XIP_test_offset+j) | (1<<0));
+
+		// Invalidate DAXI to make sure CPU sees the new data when loaded.
+		am_hal_daxi_control(AM_HAL_DAXI_CONTROL_INVALIDATE, NULL);
+		am_hal_cachectrl_control(AM_HAL_CACHECTRL_CONTROL_MRAM_CACHE_INVALIDATE, NULL);
+
+
+		for(int i= 0; i < 1000; i++)
+		{
+			ui32Status = test_function();
+			if(ui32Status != 0x4770BF00)
+			{
+				am_util_stdio_printf("\n%d  Returned %X from XIP call\n",i,ui32Status);
+				break;
+			}
+			else
+			{
+				//if(i%200==0)
+				//	am_util_stdio_printf("%d \n",i);
+			}
+				
+		}
+	      if(ui32Status != 0x4770BF00)
+			break;
+	}
+
+	am_util_stdio_printf("\n");
+
+}
+
 //*****************************************************************************
 //
 // MSPI Example Main.
@@ -375,7 +452,7 @@ main(void)
     //
     //Bit[0] of any address you write to the PC with a BX, BLX, LDM, LDR, or POP instruction must be 1 for correct execution,
     //because this bit indicates the required instruction set, and the Cortex-M4 processor only supports Thumb instr
-    mspi_xip_test_function_t test_function = (mspi_xip_test_function_t)((MSPI_XIP_BASE_ADDRESS) | XIP_TEST_OFFSET+1);
+    mspi_xip_test_function_t test_function = (mspi_xip_test_function_t)((MSPI_XIP_BASE_ADDRESS) | XIP_TEST_OFFSET | (1<<0));
 
     //
     // Set the default cache configuration
@@ -537,7 +614,9 @@ main(void)
 	}
 #endif
 
-
+#if 1
+    test_xip();
+#else
     //
     // Enable XIP mode.
     //
@@ -643,7 +722,7 @@ main(void)
         am_util_stdio_printf("Failed to disable XIP mode in the MSPI!\n");
     }
 #endif
-
+#endif
 #ifdef ENABLE_XIPMM
     //
     // If scrambling on, force word accesses in XIPMM.
