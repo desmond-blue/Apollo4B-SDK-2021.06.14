@@ -1863,8 +1863,9 @@ psram_check(void *pHandle, uint32_t length, uint32_t address)
 		//	am_util_stdio_printf("Failed to disable XIP mode in the MSPI!\n");
 		//}
 		am_hal_gpio_state_write(0, AM_HAL_GPIO_OUTPUT_CLEAR);
-		am_util_delay_ms(1); //Good parts
+		//am_util_delay_ms(1); //Good parts
 		//am_util_delay_ms(20); //Bad parts
+		am_hal_cachectrl_control(AM_HAL_CACHECTRL_CONTROL_MRAM_CACHE_INVALIDATE, NULL);//Invalidate cache before reading back with PIO
 
 		am_hal_gpio_state_write(0, AM_HAL_GPIO_OUTPUT_SET);
     
