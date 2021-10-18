@@ -368,7 +368,7 @@ run_mspi_xipmm(uint32_t block, bool bUseWordAccesses)
 
 am_devices_mspi_psram_sdr_timing_config_t MSPISdrTimingConfig;
 
-void test_xip(void)
+void test_xip(int icount, int isize)
 {
 	uint32_t ui32Status = 0;
 	uint32_t      funcAddr = ((uint32_t)&xip_test_function) & 0xFFFFFFFE;
@@ -385,7 +385,7 @@ void test_xip(void)
 		am_util_stdio_printf("Failed to put the MSPI into XIP mode!\n");
 	}
 
-	for(int j=0; j < (0x100000 - XIP_FUNC_SIZE); j+=4)
+	for(int j=0; j < (isize - XIP_FUNC_SIZE); j+=4)
 	{
 		am_util_stdio_printf("0x%08X \n",j+MSPI_XIP_BASE_ADDRESS);
 		//
@@ -412,7 +412,7 @@ void test_xip(void)
 		am_hal_cachectrl_control(AM_HAL_CACHECTRL_CONTROL_MRAM_CACHE_INVALIDATE, NULL);
 
 
-		for(int i= 0; i < 1000; i++)
+		for(int i= 0; i < icount; i++)
 		{
 			ui32Status = test_function();
 			if(ui32Status != 0x4770BF00)
@@ -499,6 +499,7 @@ main(void)
     else
     {
         am_util_stdio_printf("==== Scan Result: Failed, no valid setting.  \n");
+	  goto error;
     }
 
 #else
@@ -515,6 +516,7 @@ main(void)
     if (AM_DEVICES_MSPI_PSRAM_STATUS_SUCCESS != ui32Status)
     {
         am_util_stdio_printf("Failed to configure the MSPI and PSRAM Device correctly!\n");
+	  goto error;
     }
     NVIC_SetPriority(mspi_interrupts[MSPI_TEST_MODULE], AM_IRQ_PRIORITY_DEFAULT);
     NVIC_EnableIRQ(mspi_interrupts[MSPI_TEST_MODULE]);
@@ -542,6 +544,7 @@ main(void)
     if (AM_DEVICES_MSPI_PSRAM_STATUS_SUCCESS != ui32Status)
     {
         am_util_stdio_printf("Failed to disable XIP mode in the MSPI!\n");
+	  goto error;
     }
 
 #if 1   
@@ -553,6 +556,7 @@ main(void)
     if (AM_DEVICES_MSPI_PSRAM_STATUS_SUCCESS != ui32Status)
     {
         am_util_stdio_printf("Failed to write buffer to Flash Device!\n");
+	  goto error;
     }
 #endif
 
@@ -615,7 +619,7 @@ main(void)
 #endif
 
 #if 1
-    test_xip();
+    test_xip(1, 1024);
 #else
     //
     // Enable XIP mode.
@@ -734,6 +738,7 @@ main(void)
     else
     {
         am_util_stdio_printf("XIPMM aperature is NOT working!\n");
+	  goto error;
     }
 #endif
     //
@@ -746,12 +751,14 @@ main(void)
     if (AM_DEVICES_MSPI_PSRAM_STATUS_SUCCESS != ui32Status)
     {
         am_util_stdio_printf("Failed to shutdown the MSPI and Flash Device!\n");
+	  goto error;
     }
 
     //
     //  End banner.
     //
     am_util_stdio_printf("Quad MSPI PSRAM Example Complete\n");
+error:
 
     //
     // Loop forever while sleeping.
